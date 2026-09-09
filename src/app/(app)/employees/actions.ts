@@ -100,7 +100,8 @@ export async function updateEmployeeAction(
   const actor = await requireRoleForAction('admin', 'hr');
 
   const existing = await db.select().from(employees).where(eq(employees.id, employeeId)).limit(1);
-  if (!existing[0]) {
+  const existingEmployee = existing[0];
+  if (!existingEmployee) {
     return { error: 'Employee not found.' };
   }
 
@@ -124,7 +125,7 @@ export async function updateEmployeeAction(
   }
 
   try {
-    await assertUniqueCodeAndEmail(existing[0].employeeCode, workEmail, employeeId);
+    await assertUniqueCodeAndEmail(existingEmployee.employeeCode, workEmail, employeeId);
   } catch (err) {
     return { error: (err as Error).message };
   }

@@ -40,11 +40,12 @@ export async function clockInAction(_prevState: AttendanceActionState, formData:
   const now = new Date().toISOString();
 
   if (existing[0]) {
+    const record = existing[0];
     await db
       .update(attendanceRecords)
       .set({ clockInAt: now, clockInLat: lat, clockInLng: lng, status: 'present', updatedAt: now })
-      .where(eq(attendanceRecords.id, existing[0].id));
-    await recordAudit({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: existing[0].id });
+      .where(eq(attendanceRecords.id, record.id));
+    await recordAudit({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: record.id });
   } else {
     const id = nanoid();
     await db.insert(attendanceRecords).values({

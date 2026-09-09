@@ -7,10 +7,11 @@ import { EditEmployeeForm } from './edit-employee-form';
 import { setEmployeeStatusAction } from '../actions';
 import { employmentStatusBadgeClass, formatDate } from '@/lib/format';
 
-export default async function EmployeeProfilePage({ params }: { params: { id: string } }) {
+export default async function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   await requireRole('admin', 'hr');
 
-  const rows = await db.select().from(employees).where(eq(employees.id, params.id)).limit(1);
+  const rows = await db.select().from(employees).where(eq(employees.id, id)).limit(1);
   const employee = rows[0];
   if (!employee) notFound();
 

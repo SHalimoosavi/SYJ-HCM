@@ -2,17 +2,21 @@ import Link from 'next/link';
 import type { CurrentUser } from '@/lib/session';
 import { isHrOrAdmin } from '@/lib/auth';
 
-const baseLinks = [
+type NavLink = { href: string; label: string };
+
+const baseLinks: NavLink[] = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/attendance', label: 'Attendance' },
   { href: '/leave', label: 'Leave' },
   { href: '/profile', label: 'My Profile' }
 ];
 
-const hrLinks = [{ href: '/employees', label: 'Employees' }];
+const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }];
 
 export function Sidebar({ user }: { user: CurrentUser }) {
-  const links = isHrOrAdmin(user.role) ? [baseLinks[0], hrLinks[0], ...baseLinks.slice(1)] : baseLinks;
+  const links: NavLink[] = isHrOrAdmin(user.role)
+    ? [...baseLinks.slice(0, 1), ...hrLinks, ...baseLinks.slice(1)]
+    : baseLinks;
 
   return (
     <aside className="hidden md:flex md:w-60 md:flex-col border-r border-surface-200 bg-white">

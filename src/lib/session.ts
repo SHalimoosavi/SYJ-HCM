@@ -24,6 +24,7 @@ function verify(cookieValue: string): string | null {
   const parts = cookieValue.split('.');
   if (parts.length !== 2) return null;
   const [sessionId, sig] = parts;
+  if (!sessionId || !sig) return null;
   const expected = createHmac('sha256', getSecret()).update(sessionId).digest('hex');
   const sigBuf = Buffer.from(sig, 'hex');
   const expectedBuf = Buffer.from(expected, 'hex');

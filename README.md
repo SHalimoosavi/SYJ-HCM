@@ -25,8 +25,9 @@ added without reworking Phase 1.
 
 - Next.js 14 (App Router, Server Actions)
 - TypeScript
-- Drizzle ORM, using the `node:sqlite` driver (Node's built-in SQLite module —
-  no native binaries, no `better-sqlite3`)
+- Drizzle ORM, connected to Node's built-in `node:sqlite` module via Drizzle's
+  stable `sqlite-proxy` driver (see "Database driver" below for why — no
+  native binaries, no `better-sqlite3`)
 - Tailwind CSS
 - `node:test` for the test suite (no test framework dependency)
 
@@ -36,8 +37,9 @@ native module.
 
 ## Requirements
 
-- Node.js **22.5.0 or later** (`node:sqlite` requires this; this project was
-  built and hand-verified against Node 22.22)
+- Node.js **22.5.0 or later** (`node:sqlite` requires this; algorithms were
+  hand-verified against Node 22.22 in a sandbox, and the project has since
+  been confirmed running under Node 24.18.0)
 - A machine/environment **with internet access** for the initial
   `npm install` (this codebase was written in a network-isolated sandbox and
   has not had `npm install` run against it yet — see "What has and hasn't
@@ -52,6 +54,29 @@ cp .env.example .env
 # Edit .env and set a real SESSION_SECRET, e.g.:
 #   openssl rand -hex 32
 ```
+
+## Database driver
+
+`src/db/client.ts` connects to `node:sqlite` (Node's built-in module,
+**not** a native addon) through Drizzle's `drizzle-orm/sqlite-proxy` driver,
+not `drizzle-orm/node-sqlite`.
+
+Why: Drizzle's dedicated `node-sqlite` driver only ships on the 1.0
+beta/RC release line — it was never backported to the 0.4x stable branch.
+On stable `drizzle-orm@0.45.2`, `import { drizzle } from
+'drizzle-orm/node-sqlite'` fails at build time with "Package path
+./node-sqlite is not exported from package", because that export genuinely
+does not exist in this version. `sqlite-proxy`, by contrast, has been part
+of stable Drizzle since 0.29.x — it just asks for a callback that executes
+SQL however you like and returns rows as plain arrays, so `client.ts`
+implements that callback directly against `node:sqlite`'s synchronous
+`DatabaseSync.prepare().all()/.get()/.run()`. Nothing outside that one file
+changed — `db.select()/.insert()/.update()/.delete()` behave identically
+everywhere else in the app.
+
+If a future Drizzle stable release re-exports `node-sqlite` (or you
+deliberately move to the 1.0 line once it's out of RC), `client.ts` is the
+only file that would need to change back.
 
 ## Database
 
@@ -89,7 +114,47 @@ a second time if the `users` table already has rows. It creates:
 **Change these passwords immediately in any environment other than local
 development.**
 
-## Running
+## Security / npm audit
+
+`postcss` is pinned as a direct devDependency at `^8.5.28` (patched against
+GHSA-qx2v-qp2m-jg93). Next.js also vendors its **own** nested copy of
+postcss internally (`next/node_modules/postcss`), independent of the
+project's direct dependency — this is a long-standing, widely-reported
+Next.js packaging issue (see `vercel/next.js` issues #93234, #93604,
+#93718), not something fixable by bumping the direct dependency alone.
+
+- **Which package introduces it**: `next/node_modules/postcss` (bundled
+  inside Next.js itself), not this project's own `postcss`.
+- **Runtime reachability**: the advisory concerns unsafe handling during
+  CSS parsing/stringification. Next's internal postcss pipeline runs
+  against this app's own build-time CSS/Tailwind sources, not against
+  arbitrary attacker-supplied CSS at runtime — SYJ-HCM has no feature that
+  accepts or renders user-supplied CSS or stylesheets. So while `npm audit`
+  correctly flags the vulnerable version being present, it is not
+  runtime-reachable by an external attacker through this application's
+  actual attack surface.
+- **Official patched Next 15 release**: unconfirmed at the time of this
+  fix — Next's own fix PR for the nested postcss version exists upstream,
+  but whether it has been backported into a specific 15.5.x stable tag
+  wasn't independently verifiable from this environment. Check
+  https://github.com/vercel/next.js/releases for the specific version
+  before relying on an upgrade alone to resolve this.
+- **Recommended production resolution** (applied in this fix, in
+  `package.json`):
+  ```json
+  "overrides": {
+    "postcss": "^8.5.28"
+  }
+  ```
+  npm's `overrides` field forces every copy of `postcss` in the dependency
+  tree — including the one nested inside `next` — to resolve to the
+  patched version, without touching Next's own version and without
+  `npm audit fix --force` (which would propose an unrelated, unnecessary
+  Next 16 upgrade). After running `npm install` with this override in
+  place, run `npm ls postcss` to confirm only one resolved version remains
+  and `npm audit --omit=dev` to confirm the finding clears.
+
+
 
 ```bash
 npm run dev       # development server, http://localhost:3000

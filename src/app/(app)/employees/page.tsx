@@ -15,14 +15,15 @@ type SearchParams = {
   page?: string;
 };
 
-export default async function EmployeesPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function EmployeesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await requireRole('admin', 'hr');
 
-  const q = searchParams.q?.trim() || '';
-  const departmentFilter = searchParams.department || '';
-  const statusFilter = searchParams.status || '';
-  const sort = searchParams.sort || 'name_asc';
-  const page = Math.max(parseInt(searchParams.page || '1', 10) || 1, 1);
+  const resolvedSearchParams = await searchParams;
+  const q = resolvedSearchParams.q?.trim() || '';
+  const departmentFilter = resolvedSearchParams.department || '';
+  const statusFilter = resolvedSearchParams.status || '';
+  const sort = resolvedSearchParams.sort || 'name_asc';
+  const page = Math.max(parseInt(resolvedSearchParams.page || '1', 10) || 1, 1);
 
   const allDepartments = await db.select().from(departments);
 

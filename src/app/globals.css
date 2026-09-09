@@ -16,19 +16,37 @@
     @apply bg-white rounded-xl border border-surface-200 shadow-card;
   }
   .btn {
-    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors;
+  }
+  .btn:disabled {
+    @apply opacity-50 pointer-events-none;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white;
+  }
+  .btn-primary:hover {
+    @apply bg-brand-700;
   }
   .btn-secondary {
-    @apply btn bg-white text-surface-900 border border-surface-300 hover:bg-surface-100;
+    @apply btn bg-white text-surface-900 border border-surface-300;
+  }
+  .btn-secondary:hover {
+    @apply bg-surface-100;
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn bg-red-600 text-white;
+  }
+  .btn-danger:hover {
+    @apply bg-red-700;
   }
   .input {
-    @apply block w-full rounded-lg border border-surface-300 px-3 py-2 text-sm text-surface-900 placeholder:text-surface-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500;
+    @apply block w-full rounded-lg border border-surface-300 px-3 py-2 text-sm text-surface-900;
+  }
+  .input::placeholder {
+    @apply text-surface-400;
+  }
+  .input:focus {
+    @apply border-brand-500 outline-none ring-1 ring-brand-500;
   }
   .label {
     @apply block text-sm font-medium text-surface-800 mb-1;
