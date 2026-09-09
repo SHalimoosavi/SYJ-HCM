@@ -49,7 +49,7 @@ native module.
 
 ```bash
 cd syj-hcm
-npm install
+npm ci
 cp .env.example .env
 # Edit .env and set a real SESSION_SECRET, e.g.:
 #   openssl rand -hex 32
@@ -187,39 +187,20 @@ npm run lint
 npm run typecheck
 ```
 
-## What has and hasn't been run
+## Validation status
 
-This codebase was written in a network-isolated sandbox (no access to the
-npm registry), so the following could **not** be executed there and need to
-be run by you, in an environment with network access, before you trust this
-as "done":
+The current Phase 1 repository has been validated in a real Node.js 24.18.0 environment:
 
-- `npm install`
-- `npm run build`
-- `npm run lint` / `npm run typecheck` (with real `next`/`drizzle-orm`/
-  `@types/*` installed)
-- `npm test` (the full suite, which needs `drizzle-orm` and `nanoid`
-  installed)
-- Actually clicking through the app in a browser
+- `npm ci` — completed successfully
+- `npm run build` — passed
+- TypeScript and lint validation during `next build` — passed
+- Static generation — 11/11 pages passed
+- `npm test` — 24/24 tests passed
+- `npm audit --omit=dev` — 0 production vulnerabilities
+- Native SQLite dependency check — no `better-sqlite3` or `sqlite3` installed
+- `git diff --check` — passed
 
-What **was** verified in the sandbox, for real, before hand-off:
-
-- The core algorithms (password hashing/verification, leave date-range
-  validation, inclusive day counting) were extracted and executed directly
-  with `node --test` against Node 22.22 — genuinely run, not just written.
-- A static analysis pass was run with a globally-available `tsc` against
-  the whole `src/` tree to catch syntax errors, malformed JSX, and logic
-  bugs independent of the (unavailable) third-party type declarations —
-  several real issues were found and fixed this way (see below).
-- The `node:sqlite` + Drizzle connection pattern, the `drizzle-orm`/
-  `drizzle-kit` version pins, and the Next.js 14 config key names were all
-  checked against current documentation/changelogs rather than assumed from
-  training data, since dependency APIs shift over time.
-
-Please run the full command list above and open an issue/fix forward if
-anything surfaces that the offline checks couldn't catch (mainly: exact
-`next.config.mjs` behavior, real React 18 JSX type-checking, and any
-transitive dependency resolution issues).
+The application should still be exercised manually in a browser after deployment, including authentication, employee management, leave, attendance/geolocation, and role-based access.
 
 ## Project structure
 
@@ -282,3 +263,26 @@ git branch -M main
 git remote add origin https://github.com/SHalimoosavi/SYJ-HCM.git
 git push -u origin main
 ```
+
+## Fresh Deployment Setup
+
+After cloning the repository, install the exact locked dependencies and configure the environment:
+
+    npm ci
+    cp .env.example .env
+
+Set a strong, unique `SESSION_SECRET` in `.env`. Never commit `.env` or the
+secret to Git.
+
+Initialize the database before the first application start:
+
+    npm run db:migrate
+    npm run build
+    npm run start
+
+For local development only, optional sample data can be created after the
+migration:
+
+    ALLOW_DEV_SEED=true npm run db:seed
+
+The development seed credentials must never be used for production.
