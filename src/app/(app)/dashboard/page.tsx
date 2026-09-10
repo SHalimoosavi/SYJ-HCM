@@ -1,4 +1,4 @@
-import { requireUser } from '@/lib/auth';
+import { requireUser, isHrOrAdmin } from '@/lib/auth';
 import { db } from '@/db/client';
 import { employees, departments, leaveRequests, attendanceRecords, auditLogs, users } from '@/db/schema';
 import { and, desc, eq, gte, lte } from 'drizzle-orm';
@@ -12,18 +12,79 @@ function todayStr(): string {
 export default async function DashboardPage() {
   const user = await requireUser();
   const today = todayStr();
+  const hrOrAdmin = isHrOrAdmin(user.role);
 
-  const allEmployees = await db.select().from(employees);
-  const activeEmployees = allEmployees.filter((e) => e.employmentStatus === 'active');
+  if (!hrOrAdmin) {
+    const [todayAttendance, todayLeave, pendingLeave] = await Promise.all([
+      user.employeeId
+        ? db
+            .select({ id: attendanceRecords.id, clockInAt: attendanceRecords.clockInAt, clockOutAt: attendanceRecords.clockOutAt })
+            .from(attendanceRecords)
+            .where(and(eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, today)))
+            .limit(1)
+        : Promise.resolve([]),
+      user.employeeId
+        ? db
+            .select({ id: leaveRequests.id })
+            .from(leaveRequests)
+            .where(
+              and(
+                eq(leaveRequests.employeeId, user.employeeId),
+                eq(leaveRequests.status, 'approved'),
+                lte(leaveRequests.startDate, today),
+                gte(leaveRequests.endDate, today)
+              )
+            )
+            .limit(1)
+        : Promise.resolve([]),
+      user.employeeId
+        ? db
+            .select({ id: leaveRequests.id })
+            .from(leaveRequests)
+            .where(and(eq(leaveRequests.employeeId, user.employeeId), eq(leaveRequests.status, 'pending')))
+        : Promise.resolve([])
+    ]);
 
-  const [approvedLeaveToday, pendingLeaveRequests, presentTodayRecords, allDepartments, recentAudit] =
+    const attendance = todayAttendance[0];
+    const stats = [
+      { label: 'Clocked In Today', value: attendance?.clockInAt ? 'Yes' : 'No' },
+      { label: 'Clocked Out Today', value: attendance?.clockOutAt ? 'Yes' : 'No' },
+      { label: 'On Leave Today', value: todayLeave.length > 0 ? 'Yes' : 'No' },
+      { label: 'Pending Leave', value: pendingLeave.length }
+    ];
+
+    return (
+      <div className="space-y-8 max-w-4xl">
+        <div>
+          <h1 className="text-2xl font-semibold text-surface-900">Welcome back, {user.email.split('@')[0]}</h1>
+          <p className="text-sm text-surface-500 mt-1">Your personal HR overview for today.</p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {stats.map((s) => (
+            <div key={s.label} className="card p-4">
+              <p className="text-xs font-medium text-surface-500">{s.label}</p>
+              <p className="text-2xl font-semibold text-surface-900 mt-1">{s.value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="card p-6">
+          <p className="text-sm text-surface-600">Organization-wide workforce and activity metrics are available to HR and administrators.</p>
+          <div className="flex gap-3 mt-4">
+            <Link href="/attendance" className="btn-secondary">Open Attendance</Link>
+            <Link href="/leave" className="btn-primary">Manage Leave</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const [allEmployees, approvedLeaveToday, pendingLeaveRequests, presentTodayRecords, allDepartments, recentAudit, upcomingLeave] =
     await Promise.all([
+      db.select().from(employees),
       db
         .select()
         .from(leaveRequests)
-        .where(
-          and(eq(leaveRequests.status, 'approved'), lte(leaveRequests.startDate, today), gte(leaveRequests.endDate, today))
-        ),
+        .where(and(eq(leaveRequests.status, 'approved'), lte(leaveRequests.startDate, today), gte(leaveRequests.endDate, today))),
       db.select().from(leaveRequests).where(eq(leaveRequests.status, 'pending')),
       db.select().from(attendanceRecords).where(and(eq(attendanceRecords.workDate, today), eq(attendanceRecords.status, 'present'))),
       db.select().from(departments),
@@ -39,9 +100,16 @@ export default async function DashboardPage() {
         .from(auditLogs)
         .leftJoin(users, eq(auditLogs.actorUserId, users.id))
         .orderBy(desc(auditLogs.createdAt))
-        .limit(8)
+        .limit(8),
+      db
+        .select()
+        .from(leaveRequests)
+        .where(and(eq(leaveRequests.status, 'approved'), gte(leaveRequests.startDate, today)))
+        .orderBy(leaveRequests.startDate)
+        .limit(5)
     ]);
 
+  const activeEmployees = allEmployees.filter((e) => e.employmentStatus === 'active');
   const onLeaveTodayCount = approvedLeaveToday.length;
   const presentTodayCount = presentTodayRecords.length;
   const absentTodayCount = Math.max(activeEmployees.length - presentTodayCount - onLeaveTodayCount, 0);
@@ -50,13 +118,6 @@ export default async function DashboardPage() {
     name: dept.name,
     count: allEmployees.filter((e) => e.departmentId === dept.id).length
   }));
-
-  const upcomingLeave = await db
-    .select()
-    .from(leaveRequests)
-    .where(and(eq(leaveRequests.status, 'approved'), gte(leaveRequests.startDate, today)))
-    .orderBy(leaveRequests.startDate)
-    .limit(5);
 
   const stats = [
     { label: 'Total Employees', value: allEmployees.length },
@@ -84,11 +145,9 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="card p-5 lg:col-span-1">
+        <div className="card p-5">
           <h2 className="text-sm font-semibold text-surface-900 mb-4">Department Breakdown</h2>
-          {deptBreakdown.length === 0 ? (
-            <EmptyState message="No departments yet." />
-          ) : (
+          {deptBreakdown.length === 0 ? <EmptyState message="No departments yet." /> : (
             <ul className="space-y-3">
               {deptBreakdown.map((d) => (
                 <li key={d.name} className="flex items-center justify-between text-sm">
@@ -100,17 +159,13 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        <div className="card p-5 lg:col-span-1">
+        <div className="card p-5">
           <h2 className="text-sm font-semibold text-surface-900 mb-4">Upcoming Approved Leave</h2>
-          {upcomingLeave.length === 0 ? (
-            <EmptyState message="No upcoming leave scheduled." />
-          ) : (
+          {upcomingLeave.length === 0 ? <EmptyState message="No upcoming leave scheduled." /> : (
             <ul className="space-y-3">
               {upcomingLeave.map((l) => (
                 <li key={l.id} className="text-sm">
-                  <p className="text-surface-800">
-                    {l.startDate} – {l.endDate}
-                  </p>
+                  <p className="text-surface-800">{l.startDate} – {l.endDate}</p>
                   <p className="text-xs text-surface-500">{l.days} day(s)</p>
                 </li>
               ))}
@@ -118,17 +173,14 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        <div className="card p-5 lg:col-span-1">
+        <div className="card p-5">
           <h2 className="text-sm font-semibold text-surface-900 mb-4">Recent Activity</h2>
-          {recentAudit.length === 0 ? (
-            <EmptyState message="No activity recorded yet." />
-          ) : (
+          {recentAudit.length === 0 ? <EmptyState message="No activity recorded yet." /> : (
             <ul className="space-y-3">
               {recentAudit.map((a) => (
                 <li key={a.id} className="text-sm">
                   <p className="text-surface-800">
-                    <span className="font-medium">{a.actorEmail ?? 'System'}</span> {a.action.replace(/_/g, ' ')}{' '}
-                    {a.entityType}
+                    <span className="font-medium">{a.actorEmail ?? 'System'}</span> {a.action.replace(/_/g, ' ')} {a.entityType}
                   </p>
                   <p className="text-xs text-surface-500">{formatDateTime(a.createdAt)}</p>
                 </li>
@@ -142,9 +194,7 @@ export default async function DashboardPage() {
         <div className="card p-8 text-center">
           <p className="text-surface-700 font-medium">Your workspace is empty.</p>
           <p className="text-sm text-surface-500 mt-1">Add your first employee to get started.</p>
-          <Link href="/employees/new" className="btn-primary mt-4 inline-flex">
-            Add Employee
-          </Link>
+          <Link href="/employees/new" className="btn-primary mt-4 inline-flex">Add Employee</Link>
         </div>
       )}
     </div>

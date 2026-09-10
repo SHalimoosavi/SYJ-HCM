@@ -39,12 +39,21 @@ export const sessions = sqliteTable(
     id: text('id').primaryKey(),
     userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     expiresAt: text('expires_at').notNull(),
+    lastActiveAt: text('last_active_at').notNull().default(sql`(current_timestamp)`),
     createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
   },
   (t) => ({
     userIdx: index('sessions_user_idx').on(t.userId)
   })
 );
+
+export const loginRateLimits = sqliteTable('login_rate_limits', {
+  key: text('key').primaryKey(),
+  failedAttempts: integer('failed_attempts').notNull().default(0),
+  windowStartedAt: text('window_started_at').notNull(),
+  lockedUntil: text('locked_until'),
+  updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+});
 
 // ---------------------------------------------------------------------------
 // Employees

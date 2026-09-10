@@ -14,6 +14,7 @@ const files = fs
 
 const db = new DatabaseSync(resolvedPath);
 db.exec('PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA busy_timeout = 5000;');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS __migrations (
@@ -22,19 +23,33 @@ db.exec(`
   );
 `);
 
-const appliedRows = db.prepare('SELECT name FROM __migrations').all() as { name: string }[];
-const applied = new Set(appliedRows.map((r) => r.name));
+try {
+  for (const file of files) {
+    const applied = db.prepare('SELECT 1 FROM __migrations WHERE name = ? LIMIT 1').get(file);
+    if (applied) {
+      console.log(`skip (already applied): ${file}`);
+      continue;
+    }
 
-for (const file of files) {
-  if (applied.has(file)) {
-    console.log(`skip (already applied): ${file}`);
-    continue;
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+    console.log(`applying: ${file}`);
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(sql);
+      db.prepare('INSERT INTO __migrations (name) VALUES (?)').run(file);
+      db.exec('COMMIT');
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // Preserve the original migration error.
+      }
+      throw error;
+    }
   }
-  const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
-  console.log(`applying: ${file}`);
-  db.exec(sql);
-  db.prepare('INSERT INTO __migrations (name) VALUES (?)').run(file);
-}
 
-db.close();
-console.log('Migrations complete.');
+  console.log('Migrations complete.');
+} finally {
+  db.close();
+}

@@ -1,11 +1,12 @@
 'use server';
 
-import { db } from '@/db/client';
+import { db, sqlite, withSqliteTransactionSync } from '@/db/client';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { requireUserForAction } from '@/lib/auth';
 import { verifyPassword, hashPassword } from '@/lib/password';
-import { recordAudit } from '@/lib/audit';
+import { recordAudit, recordAuditSync } from '@/lib/audit';
+import { createSessionRecordInTransaction, destroyOtherSessionsForUser, setSessionCookieForRecord } from '@/lib/session';
 
 export type ChangePasswordState = { error: string | null; success: boolean };
 
@@ -41,12 +42,39 @@ export async function changePasswordAction(
   }
 
   const { hash, salt } = hashPassword(newPassword);
-  await db
-    .update(users)
-    .set({ passwordHash: hash, passwordSalt: salt, updatedAt: new Date().toISOString() })
-    .where(eq(users.id, user.id));
+  const now = new Date().toISOString();
 
-  await recordAudit({ actorUserId: user.id, action: 'password_changed', entityType: 'user', entityId: user.id });
+  const newSession = withSqliteTransactionSync(() => {
+    const sessionRecord = createSessionRecordInTransaction(user.id);
+    // Password rotation invalidates every pre-existing session, including the
+    // current one. The transaction immediately creates the replacement.
+    const deleteStatement = `DELETE FROM sessions WHERE user_id = ? AND id <> ?`;
+    // Keep the replacement session while removing all old sessions.
+    sqlite.prepare(deleteStatement).run(user.id, sessionRecord.id);
+    sqlite
+      .prepare(`
+        UPDATE users
+        SET password_hash = ?, password_salt = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(hash, salt, now, user.id);
+    recordAuditSync({ actorUserId: user.id, action: 'password_changed', entityType: 'user', entityId: user.id });
+    return sessionRecord;
+  });
 
+  await setSessionCookieForRecord(newSession);
   return { error: null, success: true };
+}
+
+export async function signOutOtherSessionsAction(): Promise<{ count: number }> {
+  const user = await requireUserForAction();
+  const count = await destroyOtherSessionsForUser(user.id);
+  await recordAudit({
+    actorUserId: user.id,
+    action: 'sessions_revoked',
+    entityType: 'user',
+    entityId: user.id,
+    metadata: { scope: 'other_sessions', count }
+  });
+  return { count };
 }

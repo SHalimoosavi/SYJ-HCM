@@ -23,7 +23,7 @@ added without reworking Phase 1.
 
 ## Tech stack
 
-- Next.js 14 (App Router, Server Actions)
+- Next.js 15.5.25 (App Router, Server Actions)
 - TypeScript
 - Drizzle ORM, connected to Node's built-in `node:sqlite` module via Drizzle's
   stable `sqlite-proxy` driver (see "Database driver" below for why — no
@@ -49,7 +49,7 @@ native module.
 
 ```bash
 cd syj-hcm
-npm ci
+npm install
 cp .env.example .env
 # Edit .env and set a real SESSION_SECRET, e.g.:
 #   openssl rand -hex 32
@@ -96,8 +96,10 @@ npm run db:migrate
 ```
 
 This creates the SQLite file at the path in `DATABASE_PATH` (default
-`./data/syj-hcm.db`), with every table, index, and foreign key from the
-schema.
+`./data/syj-hcm.db`) and applies every checked-in migration in order. Each
+migration is recorded in `__migrations`, and each migration is executed with
+its ledger update inside a SQLite transaction so a failed migration is rolled
+back instead of being marked applied.
 
 ### Seeding (development only)
 
@@ -179,6 +181,11 @@ It covers:
 - `tests/attendance-constraint.test.ts` — verifies the database itself
   rejects a second attendance record for the same employee on the same day
 - `tests/auth.test.ts` — role-checking helper
+- `tests/authorization.test.ts` — negative role/ownership authorization checks
+- `tests/login-rate-limit.test.ts` — DB-backed failed-login throttling
+- `tests/session-policy.test.ts` — absolute and idle session lifetime rules
+- `tests/geolocation.test.ts` — server-side coordinate validation
+- `tests/security-constraints.test.ts` — immutable audit log, leave state, and DB coordinate guards
 
 ## Linting and type-checking
 
@@ -187,20 +194,64 @@ npm run lint
 npm run typecheck
 ```
 
-## Validation status
+## What has and hasn't been run
 
-The current Phase 1 repository has been validated in a real Node.js 24.18.0 environment:
+This codebase was written in a network-isolated sandbox (no access to the
+npm registry), so the following could **not** be executed there and need to
+be run by you, in an environment with network access, before you trust this
+as "done":
 
-- `npm ci` — completed successfully
-- `npm run build` — passed
-- TypeScript and lint validation during `next build` — passed
-- Static generation — 11/11 pages passed
-- `npm test` — 24/24 tests passed
-- `npm audit --omit=dev` — 0 production vulnerabilities
-- Native SQLite dependency check — no `better-sqlite3` or `sqlite3` installed
-- `git diff --check` — passed
+- `npm install`
+- `npm run build`
+- `npm run lint` / `npm run typecheck` (with real `next`/`drizzle-orm`/
+  `@types/*` installed)
+- `npm test` (the full suite, which needs `drizzle-orm` and `nanoid`
+  installed)
+- Actually clicking through the app in a browser
 
-The application should still be exercised manually in a browser after deployment, including authentication, employee management, leave, attendance/geolocation, and role-based access.
+What **was** verified in the sandbox, for real, before hand-off:
+
+- The core algorithms (password hashing/verification, leave date-range
+  validation, inclusive day counting) were extracted and executed directly
+  with `node --test` against Node 22.22 — genuinely run, not just written.
+- A static analysis pass was run with a globally-available `tsc` against
+  the whole `src/` tree to catch syntax errors, malformed JSX, and logic
+  bugs independent of the (unavailable) third-party type declarations —
+  several real issues were found and fixed this way (see below).
+- The `node:sqlite` + Drizzle connection pattern, the `drizzle-orm`/
+  `drizzle-kit` version pins, and the Next.js 14 config key names were all
+  checked against current documentation/changelogs rather than assumed from
+  training data, since dependency APIs shift over time.
+
+Please run the full command list above and open an issue/fix forward if
+anything surfaces that the offline checks couldn't catch (mainly: exact
+`next.config.mjs` behavior, real React 18 JSX type-checking, and any
+transitive dependency resolution issues).
+
+## Phase 1.1 production deployment
+
+Production startup now fails closed unless:
+
+- `SESSION_SECRET` is present and at least 32 characters long.
+- `ALLOW_DEV_SEED` is not `true`.
+- the SQLite database exists.
+- the migration ledger exists and every checked-in migration has been applied.
+- required Phase 1 tables exist.
+
+Deploy in this order:
+
+```bash
+npm ci
+cp .env.example .env
+# Set a unique random SESSION_SECRET (32+ characters).
+npm run db:migrate
+npm run build
+npm start
+```
+
+`npm start` does not silently run migrations. A deployment with pending migrations is rejected so schema changes are explicit and reviewable. The helper script `scripts/verify-phase1-1.sh` runs the full local verification sequence used for the Phase 1.1 sign-off. Development seed data remains opt-in and must never be enabled for production.
+
+Security responses include CSP, HSTS in production, frame/content-type/referrer protections, a geolocation Permissions Policy, and `Cache-Control: private, no-store` on application responses.
 
 ## Project structure
 
@@ -263,26 +314,3 @@ git branch -M main
 git remote add origin https://github.com/SHalimoosavi/SYJ-HCM.git
 git push -u origin main
 ```
-
-## Fresh Deployment Setup
-
-After cloning the repository, install the exact locked dependencies and configure the environment:
-
-    npm ci
-    cp .env.example .env
-
-Set a strong, unique `SESSION_SECRET` in `.env`. Never commit `.env` or the
-secret to Git.
-
-Initialize the database before the first application start:
-
-    npm run db:migrate
-    npm run build
-    npm run start
-
-For local development only, optional sample data can be created after the
-migration:
-
-    ALLOW_DEV_SEED=true npm run db:seed
-
-The development seed credentials must never be used for production.
