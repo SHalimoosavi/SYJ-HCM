@@ -1,242 +1,276 @@
-# SYJ-HCM — Phase 1.1 Production Readiness & Security Hardening
+# SYJ-HCM — Phase 1.1 Production Hardening / Phase 1.2a Tenant Follow-up
 
-## Scope
+## Repository baseline
 
-Repository baseline: `main` at `030168a6b5c2952933e371ad31e6878fb2391921`.
+The Phase 1.1 hardening was merged into `main` before this follow-up. The current source confirms the hardened authentication, RBAC, transaction, attendance, leave, audit and startup controls described below.
 
-This hardening pass does **not** add Recruiting/ATS/Onboarding or any other Phase 2 feature.
-The existing `node:sqlite` + `drizzle-orm/sqlite-proxy` architecture is preserved and no native binary dependency is introduced.
+This document has been reconciled with the current source tree and now also records the Phase 1.2a tenant foundation added after the Phase 1.1 release.
 
-## 1. Authentication
+## 1. Phase 1.1 authentication
 
-### Root cause / baseline
+### Current implementation
 
-- `src/lib/session.ts` previously had only a seven-day absolute session expiry and no DB-backed idle timestamp.
-- The cookie already used `httpOnly`, `sameSite=lax`, `secure` in production, and a path of `/`.
-- `src/app/login/actions.ts` had generic credential errors but no persistent failed-login throttling.
-- `src/app/(app)/profile/actions.ts` changed the password without revoking existing sessions.
+- `src/lib/session.ts` uses DB-backed sessions with a seven-day absolute lifetime and a 24-hour idle lifetime.
+- Sessions track `last_active_at` and are touched at a bounded interval.
+- `src/lib/login-rate-limit.ts` stores failed-login state in SQLite.
+- `src/app/login/actions.ts` uses generic credential errors and audits failed attempts.
+- Password rotation creates a replacement session and removes previous sessions.
+- `src/app/(app)/profile/actions.ts` exposes sign-out-other-sessions.
 
-### Fix
+### Tenant follow-up
 
-- Added `sessions.last_active_at`.
-- Added seven-day absolute + 24-hour idle session policy.
-- Added five-minute DB touch interval.
-- Added DB-backed login throttling in `login_rate_limits` (15-minute window, five failures, 15-minute lockout).
-- Login failures are audited using an HMAC-derived identifier rather than storing raw IP/email in the audit entity id.
-- Password changes atomically revoke previous sessions, create a fresh session, update the password, and write the audit event.
-- Added “Sign out other sessions” self-service action.
-- Session secret minimum strengthened to 32 characters.
+Session rows now also carry `organization_id`. The authenticated user's organization is resolved from the session/user database relationship; the browser cookie does not carry a trusted tenant identifier.
 
-### Behavior change
+The only intentionally pre-auth unscoped identity lookup remains the login lookup by email. There is no authenticated tenant context at that point. Once the account is found, its persisted `organization_id` is used for rate limiting, session creation and audit logging.
 
-Repeated failed logins can now be throttled; idle sessions older than 24 hours require re-authentication; password changes sign out prior sessions. These are intentional security changes.
+## 2. Phase 1.1 authorization / RBAC
 
-## 2. RBAC / authorization
+### Current implementation
 
-### Root cause / baseline
+- `src/lib/auth.ts` remains the server-side page and Server Action authorization boundary.
+- `src/lib/authorization.ts` contains the role matrix and ownership helpers.
+- Authorization failures are audited.
 
-- Server-side role enforcement already existed through `requireUser`, `requireRole`, `requireUserForAction`, and `requireRoleForAction`.
-- Leave cancellation had an inline ownership/HR check.
-- The employee dashboard exposed organization-wide workforce metrics and recent audit activity to ordinary employees.
+### Phase 1.2a change
 
-### Fix
+The authorization matrix now explicitly documents `same_organization` as a required dimension. `canCancelLeave()` and `canAccessOwnEmployeeRecord()` reject cross-organization contexts before role/ownership checks succeed.
 
-- Added explicit authorization helpers and an authorization matrix in `src/lib/authorization.ts`.
-- Leave ownership checks now use the shared helper.
-- Added negative authorization tests for employee/HR/admin role and ownership boundaries.
-- Employee dashboard now shows personal HR information only; organization-wide metrics and activity remain HR/admin-only.
-- Authorization failures are audited for both page and Server Action boundaries.
+## 3. Phase 1.1 database integrity
 
-### Behavior change
+The existing migration chain remains immutable:
 
-Employees no longer see organization-wide workforce counts, upcoming organization leave, or recent audit activity on the dashboard. This is intentional privacy/RBAC hardening.
+- `drizzle/0000_init.sql`
+- `drizzle/0001_phase1_1_security.sql`
+- `drizzle/0002_attendance_clock_order_insert_guard.sql`
 
-## 3. Database / migrations
+The new tenant migration is:
 
-### Root cause / baseline
+- `drizzle/0003_multi_tenant_foundation.sql`
 
-- The custom migration runner tracked applied files but executed a migration and its ledger insert without a transaction.
-- Several business operations performed multiple related writes as separate awaited statements.
+The custom migration runner in `scripts/migrate.ts` continues to execute each migration and its ledger write inside a SQLite transaction.
 
-### Fix
+## 4. Phase 1.2a organization model
 
-- Migration execution and `__migrations` ledger insertion are now wrapped in `BEGIN IMMEDIATE` / `COMMIT`, with rollback on failure.
-- Added a synchronous transaction helper around the existing `DatabaseSync` connection. The callback is deliberately synchronous so another request cannot interleave statements into the transaction.
-- Employee creation, employee update/status changes, leave operations, attendance mutations, login session creation, and password rotation now use atomic transaction boundaries where correctness matters.
-- Added DB-level state/coordinate/audit integrity triggers.
+### Files
 
-### Validation
+- `src/db/schema.ts`
+- `src/lib/tenant.ts`
+- `drizzle/0003_multi_tenant_foundation.sql`
+- `scripts/seed.ts`
+- `scripts/start.ts`
 
-The actual migration runner was transpiled and executed against a fresh temporary SQLite database twice. First run applied `0000_init.sql` and `0001_phase1_1_security.sql`; second run skipped both as already applied. The migration ledger contained both migrations after the second run.
+### Model
 
-## 4. Attendance / geolocation
+`organizations` is the tenant root with:
 
-### Root cause / baseline
+- `id`
+- `name`
+- `slug`
+- `status`
+- `created_at`
+- `updated_at`
 
-- The server already generated authoritative timestamps and enforced one attendance row per employee/day through a unique index.
-- Latitude/longitude were converted with `Number()` but had no finite/range validation.
-- The clock-in read/update/insert flow could race with another request.
-- The personal attendance query selected complete records even though coordinates were not rendered.
+`organization_id` is required on:
 
-### Fix
+- departments
+- users
+- sessions
+- login_rate_limits
+- employees
+- leave_types
+- leave_balances
+- leave_requests
+- attendance_records
+- audit_logs
 
-- Added server-side coordinate validation: latitude `[-90,90]`, longitude `[-180,180]`, finite numbers, and pair completeness.
-- Added DB triggers enforcing coordinate bounds and coordinate-pair integrity.
-- Clock-in/out updates are conditional and transactional; concurrent duplicate inserts return the existing “already clocked in” behavior instead of surfacing a raw constraint error.
-- Personal attendance history selects only date/time/status fields; geolocation is not exposed to the UI.
-- HR/admin organization attendance view still excludes coordinates.
+### Existing-data migration strategy
 
-### Behavior change
+The migration creates a single `org_default` organization, renames the legacy tables, creates tenant-aware replacements, copies every existing row with `organization_id = 'org_default'`, recreates indexes and Phase 1.1 integrity triggers, and only then drops the legacy tables.
 
-Malformed or partial coordinates are rejected instead of being silently stored as `null`/invalid numbers. This is intentional validation hardening.
+This is intentionally more conservative than `ALTER TABLE ... ADD COLUMN ... DEFAULT`: after migration, the new column is genuinely `NOT NULL` and has no accidental application-level tenant default.
 
-## 5. Leave
+The migration was tested against a populated Phase 1.1-style database containing one row in every existing table. Row counts were preserved for all ten migrated tables, all copied rows received `org_default`, the new column was confirmed `NOT NULL`, and all seven Phase 1.1 integrity triggers were restored.
 
-### Root cause / baseline
+## 5. Tenant enforcement — pages and Server Actions
 
-The previous approval flow separately updated the leave request and then incremented the balance. Two approvals could observe the same remaining balance, and a failure between the two writes could leave inconsistent state.
+The following application areas now derive tenant scope from `requireUser()` / `requireRoleForAction()` and filter their database operations by `organizationId`:
 
-### Fix
+- `src/app/(app)/dashboard/page.tsx`
+- `src/app/(app)/employees/page.tsx`
+- `src/app/(app)/employees/new/page.tsx`
+- `src/app/(app)/employees/[id]/page.tsx`
+- `src/app/(app)/employees/actions.ts`
+- `src/app/(app)/leave/page.tsx`
+- `src/app/(app)/leave/actions.ts`
+- `src/app/(app)/attendance/page.tsx`
+- `src/app/(app)/attendance/actions.ts`
+- `src/app/(app)/profile/page.tsx`
+- `src/app/(app)/profile/actions.ts`
+- `src/app/(app)/logout-action.ts`
+- `src/lib/leave-rules.ts`
+- `src/lib/session.ts`
+- `src/lib/login-rate-limit.ts`
+- `src/lib/audit.ts`
 
-- Leave apply, cancel, approve, and reject paths now use short synchronous SQLite transactions.
-- Approval performs the balance decrement with an atomic conditional update: `allocated - used >= requested_days`.
-- Approval re-checks date overlap inside the same transaction.
-- Approval/cancellation/rejection updates require `status = 'pending'`.
-- Added DB trigger enforcing the allowed state machine: `pending -> approved|rejected|cancelled`; terminal states cannot be reversed.
-- Added concurrency invariant test showing two one-day balance decrements against one remaining day allow exactly one update.
+Cross-tenant foreign-key relationships are additionally guarded at the application boundary where IDs originate from client input (for example, employee department selection and leave cancellation/approval request IDs).
 
-### Behavior change
-
-An approval that races with cancellation or another approval now deterministically loses if its request is no longer pending or its balance is no longer sufficient. This prevents overspending and invalid state transitions.
-
-## 6. Audit logging
-
-### Root cause / baseline
-
-The previous audit writer was append-only by convention, but SQLite itself did not prevent direct UPDATE/DELETE operations. Login failures and authorization failures were not consistently logged.
-
-### Fix
-
-- Added synchronous audit insertion for atomic business transactions.
-- Added `login_failed`, `authorization_failed`, `sessions_revoked`, and existing authentication/business events to the audit stream.
-- Added SQLite triggers rejecting UPDATE and DELETE against `audit_logs`.
-- No application UPDATE/DELETE path for audit logs exists.
-
-### Validation
-
-A real SQLite test confirmed direct UPDATE and DELETE attempts against `audit_logs` fail with `Audit logs are immutable`.
-
-## 7. Security baseline
-
-### Root cause / baseline
-
-- `next.config.mjs` was empty.
-- Middleware only performed the documented cookie-presence UX redirect.
-- Production startup did not validate configuration or migration completeness.
-
-### Fix
+## 6. Tenant isolation tests
 
 Added:
 
-- Content-Security-Policy
-- X-Content-Type-Options
-- X-Frame-Options
-- Referrer-Policy
-- Permissions-Policy with geolocation limited to the application origin
-- Cross-Origin-Opener-Policy
-- HSTS in production
-- `Cache-Control: private, no-store` for application responses
-- Production startup validation for `SESSION_SECRET`, development seed mode, database existence, migration completeness, and required tables.
+- `tests/tenant-isolation.test.ts`
+- `tests/tenant-migration.test.ts`
 
-The existing middleware remains intentionally non-authoritative for authentication; database-backed authorization remains in the application layer.
+The isolation test creates organizations A and B and verifies that an organization-A scoped query cannot read or mutate organization-B employee, leave, attendance, audit, session or login-rate-limit rows by ID/key manipulation.
 
-### Validation
+The authorization tests also include an explicit cross-organization rejection case.
 
-The startup validator was executed with no `SESSION_SECRET` and correctly exited with status 1 before attempting to start Next.js. It was also executed with a valid-length secret and a missing database and correctly failed closed with a migration/setup message.
+## 7. Documentation / version correction
 
-## 8. Deployment / CI
+### `README.md`
 
-### Fix
+The README now documents:
 
-- `npm start` now uses `scripts/start.ts` for fail-fast production checks before launching `next start`.
-- Added `.github/workflows/ci.yml` with:
-  - locked dependency installation
-  - typecheck
-  - lint
-  - tests
-  - production build
-  - `npm audit --omit=dev --audit-level=high`
-- Added `scripts/verify-phase1-1.sh` for the same local verification sequence.
-- `.env.example` now defaults development seed mode to false and documents the stronger secret requirement.
+- actual Phase 1.1 feature scope
+- the current CI verification sequence
+- the current test-case count from the repository test files
+- the Phase 1.2a organization model
+- server-derived tenant context
+- the pre-auth login exception
+- the tenant-scoped table list
+- the new migration chain
+- deliberately deferred Phase 1.2 work
+- the proposed release tags
 
-## 9. Final verification status
+### `package.json`
 
-### Actually executed in the build workspace
+The development version is now `0.9.3-alpha` for the tenant-foundation snapshot.
 
-- SQLite migration SQL syntax and trigger installation: **passed**.
-- Migration runner behavior: **passed** on a fresh temporary DB and a second idempotent run.
-- TypeScript/TSX syntax parse across 55 files using the TypeScript compiler API: **passed; no syntax diagnostics**.
-- Session policy checks: **passed**.
-- Authorization helper checks: **passed**.
-- Production startup fail-fast checks: **passed** for missing secret and missing database cases.
-- `node --check next.config.mjs`: **passed**.
+The preceding documentation/version release is `v0.9.2-alpha` and must be tagged separately before the tenant commit is applied.
 
-### Not honestly claimable from this workspace
+## 8. Validation actually executed in this build workspace
 
-The complete `npm ci`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, and `npm audit --omit=dev` suite could not be executed here because this build workspace has no network access and the source bundle available to the workspace does not contain the repository's `package-lock.json`/installed dependency tree. The user's existing Termux clone does contain the known-good lockfile and should be used for the final real dependency validation.
+### Passed
 
-Do **not** mark Phase 1.1 signed off until the final verification script passes in the user's clone.
+1. Populated-schema migration test using real Node `node:sqlite`:
+   - 0000 + 0001 + 0002 applied
+   - representative rows inserted into every legacy table
+   - 0003 applied inside `BEGIN IMMEDIATE` / `COMMIT`
+   - all ten table row counts preserved
+   - all organization IDs backfilled to `org_default`
+   - `employees.organization_id` confirmed NOT NULL
+   - all seven Phase 1.1 integrity triggers restored
 
-## Changed / added files
+2. Fresh migration SQL execution:
+   - migration SQL was executed directly against an empty in-memory SQLite database
+   - tenant migration completed successfully
 
-- `.env.example`
-- `.github/workflows/ci.yml`
-- `README.md`
-- `next.config.mjs`
-- `package.json`
-- `drizzle/0001_phase1_1_security.sql`
-- `scripts/migrate.ts`
-- `scripts/start.ts`
-- `scripts/verify-phase1-1.sh`
-- `src/db/client.ts`
-- `src/db/schema.ts`
-- `src/lib/audit.ts`
-- `src/lib/auth.ts`
-- `src/lib/authorization.ts`
-- `src/lib/geolocation.ts`
-- `src/lib/login-rate-limit.ts`
-- `src/lib/session-policy.ts`
-- `src/lib/session.ts`
-- `src/middleware.ts`
-- `src/app/login/actions.ts`
-- `src/app/(app)/attendance/actions.ts`
-- `src/app/(app)/attendance/page.tsx`
-- `src/app/(app)/dashboard/page.tsx`
-- `src/app/(app)/employees/actions.ts`
-- `src/app/(app)/leave/actions.ts`
-- `src/app/(app)/profile/actions.ts`
-- `src/app/(app)/profile/page.tsx`
-- `src/app/(app)/profile/session-management-form.tsx`
-- `tests/helpers/setup-test-db.ts`
-- `tests/authorization.test.ts`
-- `tests/concurrency-invariants.test.ts`
-- `tests/geolocation.test.ts`
-- `tests/login-rate-limit.test.ts`
-- `tests/security-constraints.test.ts`
-- `tests/session-policy.test.ts`
+3. Static organization-scope scan:
+   - raw SQL against tenant-scoped tables was inspected
+   - application DELETE/UPDATE/SELECT paths introduced in this pass include explicit organization predicates
+   - the only intentional pre-auth exception is login account lookup by email, documented above
 
-## Recommended commits
+4. TypeScript source syntax parsing:
+   - all `.ts`/`.tsx` source/test files were parsed with the TypeScript compiler API available in the workspace
+   - syntax diagnostics: 0
 
-1. `feat: harden authentication and session lifecycle`
-2. `feat: harden authorization attendance leave and audit integrity`
-3. `feat: add production security headers startup checks and CI`
+### Not executed here — must be run in the user's real checkout
 
-For a single squashed release commit, use:
+The build container has no npm registry/network access and does not contain the repository's installed dependency tree or package-lock. Therefore this workspace cannot honestly claim a fresh:
 
-`feat: harden Phase 1 foundation for production`
+- `npm ci`
+- `npm test`
+- `npm run typecheck`
+- `npm run build`
+- `npm audit --omit=dev --audit-level=high`
 
-## Recommended tag
+Those commands must be run in the user's checkout before the Phase 1.2a commit/tag is treated as release-ready. The repository CI workflow is configured to run the typecheck, tests, production build and production dependency audit on push/PR.
 
-`v0.9.2-alpha`
+## 9. Out of scope — deliberately not built
 
-Reason: this is a direct hardening release after `v0.9.1-alpha`, with no Phase 2 scope included.
+This pass does NOT include:
+
+- organization settings
+- organization branding
+- subscriptions
+- billing
+- license keys
+- commercial licensing
+- holiday calendars
+- attendance policy configuration
+- leave policy configuration
+- employee import/export
+- notifications
+- password reset
+- email verification
+- document management
+- backup/restore automation
+- monitoring/observability platform
+- Recruiting / ATS
+- onboarding
+- expenses
+- helpdesk
+- performance / OKRs
+- payroll
+- statutory payroll rules
+- analytics
+
+These remain queued for subsequent phases.
+
+## 10. Recommended commits
+
+### Part 1 + Part 2 — already merged Phase 1.1 release correction
+
+```text
+chore: correct Phase 1.1 documentation and release version
+```
+
+Tag:
+
+```bash
+git tag -a v0.9.2-alpha -m "SYJ-HCM Phase 1.1 production hardening"
+git push origin v0.9.2-alpha
+```
+
+### Part 3 — Phase 1.2a
+
+```text
+feat: add multi-tenant foundation and tenant isolation
+```
+
+Tag after validation:
+
+```bash
+git tag -a v0.9.3-alpha -m "SYJ-HCM Phase 1.2a multi-tenant foundation"
+git push origin v0.9.3-alpha
+```
+
+## 11. Release decision
+
+Phase 1.1 remains the security-hardening release.
+
+Phase 1.2a is the tenant-foundation release. It should not be marketed as a complete commercial SaaS/HCM release yet because customer onboarding, organization administration, billing/licensing, notifications, documents, policies, ATS, operations, payroll and production observability remain intentionally outside this build.
+
+## 12. Key file / line references
+
+These references point to the final Phase 1.2a source snapshot:
+
+- `src/db/schema.ts:5-25` — organization root and tenant status model.
+- `src/db/schema.ts:31-92` — tenant columns on departments/users/sessions/login rate limits.
+- `src/db/schema.ts:104-224` — tenant columns/indexes on employees, leave, attendance and audit tables.
+- `drizzle/0003_multi_tenant_foundation.sql:1-18` — organization creation and default backfill root.
+- `drizzle/0003_multi_tenant_foundation.sql:51-188` — tenant-aware replacement table definitions.
+- `drizzle/0003_multi_tenant_foundation.sql:189-278` — populated-row backfill and legacy-table retirement.
+- `drizzle/0003_multi_tenant_foundation.sql:280-357` — tenant indexes and restored Phase 1.1 integrity triggers.
+- `src/lib/session.ts:57-76` — organization-bound session creation.
+- `src/lib/session.ts:130-181` — server-derived organization context from the authenticated session/user relationship.
+- `src/lib/authorization.ts:7-26` — organization boundary helper and ownership checks.
+- `src/lib/authorization.ts:43-63` — RBAC matrix with `same_organization` dimension.
+- `src/lib/login-rate-limit.ts:16-106` — organization-aware rate-limit key and queries.
+- `src/app/login/actions.ts:55-90` — pre-auth email lookup followed by persisted organization resolution and tenant-aware session/audit creation.
+- `src/app/(app)/employees/actions.ts:20-35` — organization-scoped department and employee uniqueness validation.
+- `src/app/(app)/leave/actions.ts:40-82` — tenant-scoped leave validation and insert.
+- `src/app/(app)/attendance/actions.ts:35-72` — tenant-scoped clock-in reads/writes.
+- `src/app/(app)/dashboard/page.tsx:83-110` — organization-scoped HR dashboard queries.
+- `tests/tenant-isolation.test.ts:88-130` — cross-tenant negative read/mutation checks.
+- `tests/tenant-migration.test.ts:38-88` — populated-schema migration and NOT NULL/backfill validation.
