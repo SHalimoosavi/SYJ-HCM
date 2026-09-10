@@ -3,6 +3,7 @@ import { db } from '@/db/client';
 import { employees, departments, leaveBalances, leaveTypes } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { ChangePasswordForm } from './change-password-form';
+import { SessionManagementForm } from './session-management-form';
 import { formatDate } from '@/lib/format';
 
 export default async function ProfilePage() {
@@ -87,6 +88,11 @@ export default async function ProfilePage() {
       <div className="card p-6">
         <h2 className="text-sm font-semibold text-surface-900 mb-4">Change Password</h2>
         <ChangePasswordForm />
+      </div>
+
+      <div className="card p-6">
+        <h2 className="text-sm font-semibold text-surface-900 mb-4">Session Security</h2>
+        <SessionManagementForm />
       </div>
     </div>
   );

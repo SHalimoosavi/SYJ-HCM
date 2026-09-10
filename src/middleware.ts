@@ -1,14 +1,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// NOTE: This middleware runs on the Edge runtime, which cannot access
-// node:sqlite. It only checks whether a session cookie is present, purely
-// as a fast UX redirect for the common case. It is NOT the authorization
-// boundary - the real, database-backed check happens in
-// src/app/(app)/layout.tsx via requireUser(), and in every Server Action via
-// requireUserForAction()/requireRoleForAction() in src/lib/auth.ts. Do not
-// rely on this file alone for security.
-
+// This middleware runs on the Edge runtime, which cannot access node:sqlite.
+// It is intentionally only a fast UX redirect. Real authentication and
+// authorization are enforced by requireUser()/requireRole() and Server Actions.
 const COOKIE_NAME = 'syj_session';
 const PUBLIC_PATHS = ['/login'];
 
@@ -16,16 +11,22 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p)) || pathname.startsWith('/_next')) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
   }
 
   const hasCookie = request.cookies.has(COOKIE_NAME);
   if (!hasCookie && pathname !== '/') {
     const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
+    const response = NextResponse.redirect(loginUrl);
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
 }
 
 export const config = {

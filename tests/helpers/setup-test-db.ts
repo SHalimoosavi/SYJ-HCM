@@ -12,8 +12,14 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-secret-only-use
 
 const setupClient = new DatabaseSync(tempPath);
 setupClient.exec('PRAGMA foreign_keys = ON;');
-const sql = fs.readFileSync(path.resolve(currentDir, '../../drizzle/0000_init.sql'), 'utf-8');
-setupClient.exec(sql);
+const migrationFiles = fs
+  .readdirSync(path.resolve(currentDir, '../../drizzle'))
+  .filter((file) => file.endsWith('.sql'))
+  .sort();
+for (const file of migrationFiles) {
+  const sql = fs.readFileSync(path.resolve(currentDir, '../../drizzle', file), 'utf-8');
+  setupClient.exec(sql);
+}
 setupClient.close();
 
 // Import side effect only - importing src/db/client after this point will

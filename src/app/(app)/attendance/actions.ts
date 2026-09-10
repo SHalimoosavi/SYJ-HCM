@@ -1,10 +1,11 @@
 'use server';
 
-import { db } from '@/db/client';
+import { db, sqlite, withSqliteTransactionSync } from '@/db/client';
 import { attendanceRecords } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { requireUserForAction } from '@/lib/auth';
-import { recordAudit } from '@/lib/audit';
+import { recordAuditSync } from '@/lib/audit';
+import { parseCoordinates } from '@/lib/geolocation';
 import { nanoid } from 'nanoid';
 import { revalidatePath } from 'next/cache';
 
@@ -20,44 +21,59 @@ export async function clockInAction(_prevState: AttendanceActionState, formData:
     return { error: 'Your account is not linked to an employee record. Contact HR.' };
   }
 
+  let coordinates;
+  try {
+    coordinates = parseCoordinates(formData);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Invalid location data.' };
+  }
+
   const workDate = todayStr();
+  const now = new Date().toISOString();
   const existing = await db
     .select()
     .from(attendanceRecords)
     .where(and(eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, workDate)))
     .limit(1);
 
-  if (existing[0]?.clockInAt) {
+  const current = existing[0];
+  if (current?.clockInAt) {
     return { error: 'You have already clocked in today.' };
   }
 
-  const latRaw = formData.get('lat');
-  const lngRaw = formData.get('lng');
-  const lat = latRaw ? Number(latRaw) : null;
-  const lng = lngRaw ? Number(lngRaw) : null;
-
-  // Server-side timestamp is authoritative - the client cannot spoof this.
-  const now = new Date().toISOString();
-
-  if (existing[0]) {
-    const record = existing[0];
-    await db
-      .update(attendanceRecords)
-      .set({ clockInAt: now, clockInLat: lat, clockInLng: lng, status: 'present', updatedAt: now })
-      .where(eq(attendanceRecords.id, record.id));
-    await recordAudit({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: record.id });
-  } else {
-    const id = nanoid();
-    await db.insert(attendanceRecords).values({
-      id,
-      employeeId: user.employeeId,
-      workDate,
-      clockInAt: now,
-      clockInLat: lat,
-      clockInLng: lng,
-      status: 'present'
+  try {
+    withSqliteTransactionSync(() => {
+      if (current) {
+        const updated = sqlite
+          .prepare(`
+            UPDATE attendance_records
+            SET clock_in_at = ?, clock_in_lat = ?, clock_in_lng = ?, status = 'present', updated_at = ?
+            WHERE id = ? AND clock_in_at IS NULL
+          `)
+          .run(now, coordinates?.latitude ?? null, coordinates?.longitude ?? null, now, current.id);
+        if (Number(updated.changes) !== 1) throw new Error('You have already clocked in today.');
+        recordAuditSync({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: current.id });
+      } else {
+        const id = nanoid();
+        try {
+          sqlite
+            .prepare(`
+              INSERT INTO attendance_records
+                (id, employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, status)
+              VALUES (?, ?, ?, ?, ?, ?, 'present')
+            `)
+            .run(id, user.employeeId, workDate, now, coordinates?.latitude ?? null, coordinates?.longitude ?? null);
+        } catch (error) {
+          if (error instanceof Error && /unique|constraint/i.test(error.message)) {
+            throw new Error('You have already clocked in today.');
+          }
+          throw error;
+        }
+        recordAuditSync({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: id });
+      }
     });
-    await recordAudit({ actorUserId: user.id, action: 'clock_in', entityType: 'attendance_record', entityId: id });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unable to clock in.' };
   }
 
   revalidatePath('/attendance');
@@ -69,6 +85,13 @@ export async function clockOutAction(_prevState: AttendanceActionState, formData
   const user = await requireUserForAction();
   if (!user.employeeId) {
     return { error: 'Your account is not linked to an employee record. Contact HR.' };
+  }
+
+  let coordinates;
+  try {
+    coordinates = parseCoordinates(formData);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Invalid location data.' };
   }
 
   const workDate = todayStr();
@@ -86,18 +109,22 @@ export async function clockOutAction(_prevState: AttendanceActionState, formData
     return { error: 'You have already clocked out today.' };
   }
 
-  const latRaw = formData.get('lat');
-  const lngRaw = formData.get('lng');
-  const lat = latRaw ? Number(latRaw) : null;
-  const lng = lngRaw ? Number(lngRaw) : null;
   const now = new Date().toISOString();
-
-  await db
-    .update(attendanceRecords)
-    .set({ clockOutAt: now, clockOutLat: lat, clockOutLng: lng, updatedAt: now })
-    .where(eq(attendanceRecords.id, record.id));
-
-  await recordAudit({ actorUserId: user.id, action: 'clock_out', entityType: 'attendance_record', entityId: record.id });
+  try {
+    withSqliteTransactionSync(() => {
+      const updated = sqlite
+        .prepare(`
+          UPDATE attendance_records
+          SET clock_out_at = ?, clock_out_lat = ?, clock_out_lng = ?, updated_at = ?
+          WHERE id = ? AND clock_out_at IS NULL
+        `)
+        .run(now, coordinates?.latitude ?? null, coordinates?.longitude ?? null, now, record.id);
+      if (Number(updated.changes) !== 1) throw new Error('You have already clocked out today.');
+      recordAuditSync({ actorUserId: user.id, action: 'clock_out', entityType: 'attendance_record', entityId: record.id });
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unable to clock out.' };
+  }
 
   revalidatePath('/attendance');
   revalidatePath('/dashboard');

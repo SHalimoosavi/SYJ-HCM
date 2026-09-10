@@ -1,16 +1,16 @@
 import { cookies } from 'next/headers';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
-import { db } from '@/db/client';
+import { db, sqlite } from '@/db/client';
 import { sessions, users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { isSessionActive, SESSION_ABSOLUTE_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from './session-policy';
 
 const COOKIE_NAME = 'syj_session';
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
 function getSecret(): string {
   const secret = process.env.SESSION_SECRET;
-  if (!secret || secret.length < 16) {
-    throw new Error('SESSION_SECRET is not configured. Set it in your .env file.');
+  if (!secret || secret.length < 32) {
+    throw new Error('SESSION_SECRET must be configured with at least 32 characters.');
   }
   return secret;
 }
@@ -33,12 +33,17 @@ function verify(cookieValue: string): string | null {
   return sessionId;
 }
 
-export async function createSession(userId: string): Promise<void> {
+function makeSessionRecord(): { id: string; expiresAt: string; lastActiveAt: string } {
   const sessionId = randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const now = Date.now();
+  return {
+    id: sessionId,
+    expiresAt: new Date(now + SESSION_ABSOLUTE_TTL_MS).toISOString(),
+    lastActiveAt: new Date(now).toISOString()
+  };
+}
 
-  await db.insert(sessions).values({ id: sessionId, userId, expiresAt });
-
+async function setSessionCookie(sessionId: string, expiresAt: string): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, sign(sessionId), {
     httpOnly: true,
@@ -47,6 +52,32 @@ export async function createSession(userId: string): Promise<void> {
     path: '/',
     expires: new Date(expiresAt)
   });
+}
+
+export async function createSession(userId: string): Promise<void> {
+  const record = makeSessionRecord();
+  await db.insert(sessions).values({
+    id: record.id,
+    userId,
+    expiresAt: record.expiresAt,
+    lastActiveAt: record.lastActiveAt
+  });
+  await setSessionCookie(record.id, record.expiresAt);
+}
+
+export function createSessionRecordInTransaction(userId: string): { id: string; expiresAt: string; lastActiveAt: string } {
+  const record = makeSessionRecord();
+  sqlite
+    .prepare(`
+      INSERT INTO sessions (id, user_id, expires_at, last_active_at)
+      VALUES (?, ?, ?, ?)
+    `)
+    .run(record.id, userId, record.expiresAt, record.lastActiveAt);
+  return record;
+}
+
+export async function setSessionCookieForRecord(record: { id: string; expiresAt: string }): Promise<void> {
+  await setSessionCookie(record.id, record.expiresAt);
 }
 
 export async function destroySession(): Promise<void> {
@@ -61,6 +92,22 @@ export async function destroySession(): Promise<void> {
   cookieStore.delete(COOKIE_NAME);
 }
 
+export async function destroyAllSessionsForUser(userId: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
+}
+
+export async function destroyOtherSessionsForUser(userId: string): Promise<number> {
+  const cookieStore = await cookies();
+  const raw = cookieStore.get(COOKIE_NAME)?.value;
+  const currentSessionId = raw ? verify(raw) : null;
+  if (!currentSessionId) return 0;
+
+  const result = sqlite
+    .prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?')
+    .run(userId, currentSessionId);
+  return Number(result.changes);
+}
+
 export type CurrentUser = {
   id: string;
   email: string;
@@ -70,9 +117,10 @@ export type CurrentUser = {
 
 /**
  * Resolves the currently authenticated user from the session cookie.
- * Returns null if there is no valid, non-expired session. This is the
- * single source of truth for authentication - every server action and
- * page must go through this (or requireUser/requireRole below).
+ * Sessions have both a seven-day absolute lifetime and a 24-hour idle
+ * lifetime. Activity refreshes the DB-backed idle timestamp at most every
+ * five minutes, while the browser cookie remains bounded by the absolute
+ * seven-day expiry.
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const cookieStore = await cookies();
@@ -85,6 +133,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   const rows = await db
     .select({
       sessionExpiresAt: sessions.expiresAt,
+      sessionLastActiveAt: sessions.lastActiveAt,
       userId: users.id,
       email: users.email,
       role: users.role,
@@ -97,9 +146,20 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     .limit(1);
 
   const row = rows[0];
-  if (!row) return null;
-  if (!row.isActive) return null;
-  if (new Date(row.sessionExpiresAt).getTime() < Date.now()) return null;
+  if (!row || !row.isActive) return null;
+
+  const now = Date.now();
+  const lastActive = new Date(row.sessionLastActiveAt).getTime();
+  if (!isSessionActive(now, row.sessionLastActiveAt, row.sessionExpiresAt)) {
+    return null;
+  }
+
+  if (now - lastActive >= SESSION_TOUCH_INTERVAL_MS) {
+    await db
+      .update(sessions)
+      .set({ lastActiveAt: new Date(now).toISOString() })
+      .where(eq(sessions.id, sessionId));
+  }
 
   return { id: row.userId, email: row.email, role: row.role, employeeId: row.employeeId };
 }

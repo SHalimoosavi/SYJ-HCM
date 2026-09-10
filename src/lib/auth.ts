@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser, type CurrentUser } from './session';
+import { recordAudit } from './audit';
+import { isRoleAllowed } from './authorization';
 
 export class ForbiddenError extends Error {
   constructor(message = 'You do not have permission to perform this action.') {
@@ -14,6 +16,13 @@ export class ForbiddenError extends Error {
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) {
+    await recordAudit({
+      actorUserId: null,
+      action: 'authorization_failed',
+      entityType: 'authorization',
+      entityId: 'anonymous',
+      metadata: { reason: 'not_authenticated', boundary: 'page' }
+    });
     redirect('/login');
   }
   return user;
@@ -25,7 +34,14 @@ export async function requireUser(): Promise<CurrentUser> {
  */
 export async function requireRole(...roles: Array<CurrentUser['role']>): Promise<CurrentUser> {
   const user = await requireUser();
-  if (!roles.includes(user.role)) {
+  if (!isRoleAllowed(user.role, roles)) {
+    await recordAudit({
+      actorUserId: user.id,
+      action: 'authorization_failed',
+      entityType: 'authorization',
+      entityId: user.id,
+      metadata: { reason: 'role_denied', role: user.role, requiredRoles: roles, boundary: 'page' }
+    });
     redirect('/dashboard');
   }
   return user;
@@ -40,6 +56,13 @@ export async function requireRole(...roles: Array<CurrentUser['role']>): Promise
 export async function requireUserForAction(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) {
+    await recordAudit({
+      actorUserId: null,
+      action: 'authorization_failed',
+      entityType: 'authorization',
+      entityId: 'anonymous',
+      metadata: { reason: 'not_authenticated', boundary: 'server_action' }
+    });
     throw new ForbiddenError('Not authenticated.');
   }
   return user;
@@ -49,7 +72,14 @@ export async function requireRoleForAction(
   ...roles: Array<CurrentUser['role']>
 ): Promise<CurrentUser> {
   const user = await requireUserForAction();
-  if (!roles.includes(user.role)) {
+  if (!isRoleAllowed(user.role, roles)) {
+    await recordAudit({
+      actorUserId: user.id,
+      action: 'authorization_failed',
+      entityType: 'authorization',
+      entityId: user.id,
+      metadata: { reason: 'role_denied', role: user.role, requiredRoles: roles }
+    });
     throw new ForbiddenError('You do not have permission to perform this action.');
   }
   return user;

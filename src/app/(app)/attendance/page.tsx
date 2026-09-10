@@ -25,7 +25,13 @@ export default async function AttendancePage() {
 
   const myHistory = user.employeeId
     ? await db
-        .select()
+        .select({
+          id: attendanceRecords.id,
+          workDate: attendanceRecords.workDate,
+          clockInAt: attendanceRecords.clockInAt,
+          clockOutAt: attendanceRecords.clockOutAt,
+          status: attendanceRecords.status
+        })
         .from(attendanceRecords)
         .where(eq(attendanceRecords.employeeId, user.employeeId))
         .orderBy(desc(attendanceRecords.workDate))
