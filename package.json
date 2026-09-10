@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "tsx scripts/start.ts",
+    "start": "node --env-file-if-exists=.env --import tsx scripts/start.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
