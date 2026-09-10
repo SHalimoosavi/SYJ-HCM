@@ -1,7 +1,8 @@
 -- SYJ-HCM Phase 1.1 security hardening
 -- Safe to re-run through the migration runner because every object is guarded.
 
-ALTER TABLE sessions ADD COLUMN last_active_at TEXT NOT NULL DEFAULT (current_timestamp);
+ALTER TABLE sessions ADD COLUMN last_active_at TEXT NOT NULL DEFAULT '1970-01-01 00:00:00';
+UPDATE sessions SET last_active_at = created_at WHERE last_active_at = '1970-01-01 00:00:00';
 
 CREATE TABLE IF NOT EXISTS login_rate_limits (
   key TEXT PRIMARY KEY,
