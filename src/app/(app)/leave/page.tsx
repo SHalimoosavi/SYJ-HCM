@@ -8,7 +8,7 @@ import { leaveStatusBadgeClass, formatDate } from '@/lib/format';
 
 export default async function LeavePage() {
   const user = await requireUser();
-  const types = await db.select().from(leaveTypes);
+  const types = await db.select().from(leaveTypes).where(eq(leaveTypes.organizationId, user.organizationId));
 
   const myRequests = user.employeeId
     ? await db
@@ -24,7 +24,7 @@ export default async function LeavePage() {
         })
         .from(leaveRequests)
         .innerJoin(leaveTypes, eq(leaveRequests.leaveTypeId, leaveTypes.id))
-        .where(eq(leaveRequests.employeeId, user.employeeId))
+        .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.employeeId, user.employeeId), eq(leaveTypes.organizationId, user.organizationId)))
         .orderBy(desc(leaveRequests.createdAt))
     : [];
 
@@ -41,9 +41,9 @@ export default async function LeavePage() {
           employeeLastName: employees.lastName
         })
         .from(leaveRequests)
-        .innerJoin(leaveTypes, eq(leaveRequests.leaveTypeId, leaveTypes.id))
-        .innerJoin(employees, eq(leaveRequests.employeeId, employees.id))
-        .where(eq(leaveRequests.status, 'pending'))
+        .innerJoin(leaveTypes, and(eq(leaveRequests.leaveTypeId, leaveTypes.id), eq(leaveRequests.organizationId, leaveTypes.organizationId)))
+        .innerJoin(employees, and(eq(leaveRequests.employeeId, employees.id), eq(leaveRequests.organizationId, employees.organizationId)))
+        .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveTypes.organizationId, user.organizationId), eq(employees.organizationId, user.organizationId), eq(leaveRequests.status, 'pending')))
         .orderBy(desc(leaveRequests.createdAt))
     : [];
 

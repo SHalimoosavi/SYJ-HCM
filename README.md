@@ -1,316 +1,276 @@
 # SYJ-HCM
 
-Sayanjali Human Capital Management — Phase 1 (Core HR).
+Sayanjali Human Capital Management — Core HR foundation with production security hardening and the Phase 1.2a multi-tenant foundation.
 
-Real, working software: every action in this app reads and writes an actual
-SQLite database via Drizzle ORM. There is no mocked data, no fake CRUD, and
-no hardcoded dashboard numbers.
+This repository contains real working software backed by SQLite through Drizzle ORM. There is no mocked tenant data and no placeholder tenant enforcement.
 
-## Phase 1 scope
+## Current release line
 
-- Authentication (email + password, hashed with scrypt, DB-backed sessions)
-- Role-based authorization (admin / hr / employee) enforced server-side
-- Employee management (create, edit, search/filter/sort, activate/deactivate)
-- Employee self-service (profile, leave balance, change password)
-- Leave management (apply, approve, reject, cancel; balance + overlap validation)
-- Attendance (clock in/out, optional browser GPS, server-authoritative timestamps)
-- HR/admin dashboard with live database-derived metrics
-- Audit logging for all sensitive actions
+- Current development version: **0.9.3-alpha**
+- Phase 1.1 security-hardening release: **v0.9.2-alpha**
+- Phase 1.2a multi-tenant foundation: **v0.9.3-alpha** (proposed; tag after validation)
 
-Phases 2–4 (Recruiting, Operations, Payroll/Analytics) are intentionally not
-built yet, but the schema and module boundaries are structured so they can be
-added without reworking Phase 1.
+The v0.9.2-alpha tag is intentionally limited to the documentation/version correction and Phase 1.1 hardening that was already merged into `main`. The Phase 1.2a tenant model is a separate subsequent release.
 
-## Tech stack
+## Phase 1 — Core HR
 
-- Next.js 15.5.25 (App Router, Server Actions)
-- TypeScript
-- Drizzle ORM, connected to Node's built-in `node:sqlite` module via Drizzle's
-  stable `sqlite-proxy` driver (see "Database driver" below for why — no
-  native binaries, no `better-sqlite3`)
-- Tailwind CSS
-- `node:test` for the test suite (no test framework dependency)
+Implemented:
 
-This matches a zero-native-binary constraint: every dependency is pure
-JS/TS, and the database driver is a Node built-in rather than a compiled
-native module.
+- Authentication with scrypt password hashing and DB-backed HMAC-signed sessions
+- Seven-day absolute and 24-hour idle session policy
+- DB-backed failed-login throttling
+- Password rotation with previous-session revocation
+- Sign-out-other-sessions
+- Server-side role-based authorization for admin / HR / employee
+- Employee CRUD and status management
+- Employee self-service profile
+- Leave application, approval, rejection and cancellation
+- Leave overlap and balance validation
+- Transaction-safe leave and attendance mutations
+- Browser geolocation attendance with server-authoritative timestamps
+- Attendance coordinate validation and database integrity guards
+- HR/admin dashboard and employee-private dashboard
+- Immutable audit records
 
-## Requirements
+## Phase 1.1 — Production security hardening
 
-- Node.js **22.5.0 or later** (`node:sqlite` requires this; algorithms were
-  hand-verified against Node 22.22 in a sandbox, and the project has since
-  been confirmed running under Node 24.18.0)
-- A machine/environment **with internet access** for the initial
-  `npm install` (this codebase was written in a network-isolated sandbox and
-  has not had `npm install` run against it yet — see "What has and hasn't
-  been run" below)
+The merged hardening pass added:
 
-## Setup
+- Persistent login throttling
+- Failed-login and authorization-failure auditing
+- Absolute + idle session expiry
+- Session revocation on password change
+- Explicit authorization helpers/matrix
+- Transaction boundaries for authentication, employee, leave and attendance operations
+- Transactional migration application
+- Attendance coordinate and clock-order database guards
+- Leave state-machine guard
+- Immutable audit-log triggers
+- CSP and production security headers
+- Production HSTS
+- Private/no-store authenticated responses
+- Fail-closed production startup checks
+- CI verification for locked install, typecheck, tests, production build and production dependency audit
 
-```bash
-cd syj-hcm
-npm install
-cp .env.example .env
-# Edit .env and set a real SESSION_SECRET, e.g.:
-#   openssl rand -hex 32
-```
+The current repository contains **47 test cases defined in `tests/*.test.ts`**: the original Phase 1/1.1 coverage plus the new Phase 1.2a tenant-isolation and populated-schema migration tests. The repository itself does not store historical GitHub Actions logs, so a past test/build/audit result is not represented as a source-of-truth file here; validate the checkout locally and rely on the CI run attached to the pushed commit for release sign-off.
+
+The CI workflow currently runs:
+
+1. `npm ci`
+2. `npm run typecheck`
+3. `npm test`
+4. `npm run build`
+5. `npm audit --omit=dev --audit-level=high`
+
+The deprecated interactive `next lint` command is intentionally not a CI step. The production build is the non-interactive Next.js validation gate.
+
+## Phase 1.2a — Multi-tenant foundation
+
+This pass adds the organization/tenant model only. It does **not** add organization settings, branding, billing, licensing, notifications, policies, import/export, password reset or email verification.
+
+### Tenant root
+
+An `organizations` table is now the tenant root:
+
+- `id`
+- `name`
+- `slug`
+- `status`
+- `created_at`
+- `updated_at`
+
+Every existing tenant-scoped table now has a required `organization_id`:
+
+- `departments`
+- `users`
+- `sessions`
+- `login_rate_limits`
+- `employees`
+- `leave_types`
+- `leave_balances`
+- `leave_requests`
+- `attendance_records`
+- `audit_logs`
+
+Existing rows are migrated into a single `org_default` organization. The migration copies populated tables into tenant-aware tables, verifies the organization backfill, preserves the existing foreign-key graph and reinstalls the Phase 1.1 integrity triggers before completing.
+
+### Authentication tenant context
+
+The browser cookie contains only the signed session identifier. It does **not** carry a client-trusted organization identifier.
+
+After authentication, `getCurrentUser()` resolves `organizationId` from the database-backed session/user relationship. Every authenticated application query uses that organization context.
+
+The login email lookup is intentionally the only pre-auth identity-resolution query that is not organization-filtered: there is no authenticated tenant context yet. Once the account is found, its persisted organization becomes the tenant context for rate limiting, auditing and session creation. Unknown-login attempts use the migration's default authentication organization namespace.
+
+### Tenant isolation
+
+Existing page queries and Server Actions have been updated to scope reads/writes by the authenticated user's `organizationId`. Cross-organization ID manipulation is covered by negative isolation tests for employees, leave requests, attendance, audit records, sessions and login-rate-limit records.
 
 ## Database driver
 
-`src/db/client.ts` connects to `node:sqlite` (Node's built-in module,
-**not** a native addon) through Drizzle's `drizzle-orm/sqlite-proxy` driver,
-not `drizzle-orm/node-sqlite`.
+The project uses:
 
-Why: Drizzle's dedicated `node-sqlite` driver only ships on the 1.0
-beta/RC release line — it was never backported to the 0.4x stable branch.
-On stable `drizzle-orm@0.45.2`, `import { drizzle } from
-'drizzle-orm/node-sqlite'` fails at build time with "Package path
-./node-sqlite is not exported from package", because that export genuinely
-does not exist in this version. `sqlite-proxy`, by contrast, has been part
-of stable Drizzle since 0.29.x — it just asks for a callback that executes
-SQL however you like and returns rows as plain arrays, so `client.ts`
-implements that callback directly against `node:sqlite`'s synchronous
-`DatabaseSync.prepare().all()/.get()/.run()`. Nothing outside that one file
-changed — `db.select()/.insert()/.update()/.delete()` behave identically
-everywhere else in the app.
+- Next.js 15.5.25
+- React 18.3.1
+- Drizzle ORM 0.45.2
+- Node.js built-in `node:sqlite`
+- `drizzle-orm/sqlite-proxy`
+- Tailwind CSS
+- Node's built-in `node:test`
 
-If a future Drizzle stable release re-exports `node-sqlite` (or you
-deliberately move to the 1.0 line once it's out of RC), `client.ts` is the
-only file that would need to change back.
+No `better-sqlite3` or `sqlite3` dependency is used, and no Redis or other new infrastructure dependency was introduced for Phase 1.2a.
 
-## Database
+Node.js **22.5.0 or later** is required because the project uses `node:sqlite`.
 
-This project ships a hand-written initial migration
-(`drizzle/0000_init.sql`) that matches `src/db/schema.ts` exactly, and a
-small custom migration runner (`scripts/migrate.ts`) that applies any `.sql`
-file in `drizzle/` that hasn't been applied yet, tracked in a local
-`__migrations` table. This was necessary because `drizzle-kit`'s `migrate`/
-`push`/`studio` commands do not yet fully support the `node:sqlite` driver
-for live connections (as of writing, they expect `better-sqlite3`, `bun`, or
-a libSQL/Turso connection) — `drizzle-kit generate` still works for
-schema-diffing since it doesn't need a live connection, but **use `npm run
-db:migrate` to actually apply migrations**, not `drizzle-kit migrate`.
+## Database migrations
+
+The checked-in migrations are:
+
+- `0000_init.sql` — Phase 1 schema
+- `0001_phase1_1_security.sql` — Phase 1.1 security constraints
+- `0002_attendance_clock_order_insert_guard.sql` — Phase 1.1 clock-order follow-up
+- `0003_multi_tenant_foundation.sql` — Phase 1.2a organization/tenant migration
+
+Use the custom migration runner:
 
 ```bash
 npm run db:migrate
 ```
 
-This creates the SQLite file at the path in `DATABASE_PATH` (default
-`./data/syj-hcm.db`) and applies every checked-in migration in order. Each
-migration is recorded in `__migrations`, and each migration is executed with
-its ledger update inside a SQLite transaction so a failed migration is rolled
-back instead of being marked applied.
+`npm start` intentionally refuses to start with pending migrations.
 
-### Seeding (development only)
+## Development seed
 
 ```bash
 ALLOW_DEV_SEED=true npm run db:seed
 ```
 
-This refuses to run unless `ALLOW_DEV_SEED=true` is set, and refuses to run
-a second time if the `users` table already has rows. It creates:
+Seed data is development-only and belongs to the default organization. Production startup rejects `ALLOW_DEV_SEED=true`.
 
-- `admin@syj-hcm.local` / `ChangeMe123!` (role: admin)
-- `sana@syj-hcm.local` / `ChangeMe123!` (role: employee)
-
-**Change these passwords immediately in any environment other than local
-development.**
-
-## Security / npm audit
-
-`postcss` is pinned as a direct devDependency at `^8.5.28` (patched against
-GHSA-qx2v-qp2m-jg93). Next.js also vendors its **own** nested copy of
-postcss internally (`next/node_modules/postcss`), independent of the
-project's direct dependency — this is a long-standing, widely-reported
-Next.js packaging issue (see `vercel/next.js` issues #93234, #93604,
-#93718), not something fixable by bumping the direct dependency alone.
-
-- **Which package introduces it**: `next/node_modules/postcss` (bundled
-  inside Next.js itself), not this project's own `postcss`.
-- **Runtime reachability**: the advisory concerns unsafe handling during
-  CSS parsing/stringification. Next's internal postcss pipeline runs
-  against this app's own build-time CSS/Tailwind sources, not against
-  arbitrary attacker-supplied CSS at runtime — SYJ-HCM has no feature that
-  accepts or renders user-supplied CSS or stylesheets. So while `npm audit`
-  correctly flags the vulnerable version being present, it is not
-  runtime-reachable by an external attacker through this application's
-  actual attack surface.
-- **Official patched Next 15 release**: unconfirmed at the time of this
-  fix — Next's own fix PR for the nested postcss version exists upstream,
-  but whether it has been backported into a specific 15.5.x stable tag
-  wasn't independently verifiable from this environment. Check
-  https://github.com/vercel/next.js/releases for the specific version
-  before relying on an upgrade alone to resolve this.
-- **Recommended production resolution** (applied in this fix, in
-  `package.json`):
-  ```json
-  "overrides": {
-    "postcss": "^8.5.28"
-  }
-  ```
-  npm's `overrides` field forces every copy of `postcss` in the dependency
-  tree — including the one nested inside `next` — to resolve to the
-  patched version, without touching Next's own version and without
-  `npm audit fix --force` (which would propose an unrelated, unnecessary
-  Next 16 upgrade). After running `npm install` with this override in
-  place, run `npm ls postcss` to confirm only one resolved version remains
-  and `npm audit --omit=dev` to confirm the finding clears.
-
-
+## Setup
 
 ```bash
-npm run dev       # development server, http://localhost:3000
-npm run build     # production build
-npm run start     # production server (after build)
+npm ci
+cp .env.example .env
+# Set a unique random SESSION_SECRET (32+ characters)
+npm run db:migrate
+npm run build
+npm start
 ```
 
 ## Testing
 
 ```bash
 npm test
-```
-
-The suite uses `node:test` (built into Node — no Jest/Vitest dependency).
-It covers:
-
-- `tests/password.test.ts` — password hashing/verification (scrypt)
-- `tests/leave-rules.test.ts` — date-range validation and day counting
-- `tests/leave-overlap-and-balance.test.ts` — overlap detection and leave
-  balance calculation, run against a real temporary SQLite database
-  (created fresh per test run via `tests/helpers/setup-test-db.ts`)
-- `tests/attendance-constraint.test.ts` — verifies the database itself
-  rejects a second attendance record for the same employee on the same day
-- `tests/auth.test.ts` — role-checking helper
-- `tests/authorization.test.ts` — negative role/ownership authorization checks
-- `tests/login-rate-limit.test.ts` — DB-backed failed-login throttling
-- `tests/session-policy.test.ts` — absolute and idle session lifetime rules
-- `tests/geolocation.test.ts` — server-side coordinate validation
-- `tests/security-constraints.test.ts` — immutable audit log, leave state, and DB coordinate guards
-
-## Linting and type-checking
-
-```bash
-npm run lint
 npm run typecheck
-```
-
-## What has and hasn't been run
-
-This codebase was written in a network-isolated sandbox (no access to the
-npm registry), so the following could **not** be executed there and need to
-be run by you, in an environment with network access, before you trust this
-as "done":
-
-- `npm install`
-- `npm run build`
-- `npm run lint` / `npm run typecheck` (with real `next`/`drizzle-orm`/
-  `@types/*` installed)
-- `npm test` (the full suite, which needs `drizzle-orm` and `nanoid`
-  installed)
-- Actually clicking through the app in a browser
-
-What **was** verified in the sandbox, for real, before hand-off:
-
-- The core algorithms (password hashing/verification, leave date-range
-  validation, inclusive day counting) were extracted and executed directly
-  with `node --test` against Node 22.22 — genuinely run, not just written.
-- A static analysis pass was run with a globally-available `tsc` against
-  the whole `src/` tree to catch syntax errors, malformed JSX, and logic
-  bugs independent of the (unavailable) third-party type declarations —
-  several real issues were found and fixed this way (see below).
-- The `node:sqlite` + Drizzle connection pattern, the `drizzle-orm`/
-  `drizzle-kit` version pins, and the Next.js 14 config key names were all
-  checked against current documentation/changelogs rather than assumed from
-  training data, since dependency APIs shift over time.
-
-Please run the full command list above and open an issue/fix forward if
-anything surfaces that the offline checks couldn't catch (mainly: exact
-`next.config.mjs` behavior, real React 18 JSX type-checking, and any
-transitive dependency resolution issues).
-
-## Phase 1.1 production deployment
-
-Production startup now fails closed unless:
-
-- `SESSION_SECRET` is present and at least 32 characters long.
-- `ALLOW_DEV_SEED` is not `true`.
-- the SQLite database exists.
-- the migration ledger exists and every checked-in migration has been applied.
-- required Phase 1 tables exist.
-
-Deploy in this order:
-
-```bash
-npm ci
-cp .env.example .env
-# Set a unique random SESSION_SECRET (32+ characters).
-npm run db:migrate
 npm run build
-npm start
+npm audit --omit=dev --audit-level=high
 ```
 
-`npm start` does not silently run migrations. A deployment with pending migrations is rejected so schema changes are explicit and reviewable. The helper script `scripts/verify-phase1-1.sh` runs the full local verification sequence used for the Phase 1.1 sign-off. Development seed data remains opt-in and must never be enabled for production.
+The test suite includes:
 
-Security responses include CSP, HSTS in production, frame/content-type/referrer protections, a geolocation Permissions Policy, and `Cache-Control: private, no-store` on application responses.
+- password hashing/verification
+- leave date and balance rules
+- attendance constraints
+- authorization negatives
+- login rate limiting
+- session policy
+- geolocation validation
+- security/database constraints
+- concurrency invariants
+- **tenant isolation negatives**
+- **populated-schema tenant migration/backfill validation**
 
 ## Project structure
 
-```
+```text
 src/
   app/
-    login/                  Public login page + server action
-    (app)/                  Authenticated route group
-      layout.tsx            The real auth boundary (requireUser())
-      dashboard/            Live-data dashboard
-      employees/            Employee CRUD (HR/admin only)
-      leave/                Apply / approve / reject / cancel
-      attendance/           Clock in/out + history
-      profile/              Self-service + change password
+    login/                  Authentication and login Server Action
+    (app)/                  Authenticated application routes
+      dashboard/            Tenant-scoped workforce dashboard
+      employees/            Tenant-scoped employee CRUD
+      leave/                Tenant-scoped leave workflows
+      attendance/           Tenant-scoped attendance workflows
+      profile/              Tenant-scoped employee self-service
   db/
-    schema.ts               Drizzle schema (all tables + relations)
-    client.ts                node:sqlite + Drizzle connection
+    schema.ts               Organization + tenant-aware Drizzle schema
+    client.ts               node:sqlite + Drizzle sqlite-proxy
   lib/
-    auth.ts                 requireUser/requireRole (pages) and
-                             requireUserForAction/requireRoleForAction
-                             (Server Actions) — the real authorization
-                             enforcement points
-    session.ts               DB-backed, HMAC-signed cookie sessions
-    password.ts               scrypt hashing (no native deps)
-    leave-rules.ts            Overlap detection, balance checks, date math
-    audit.ts                  Audit log writer
-  middleware.ts              Edge-runtime UX redirect only (NOT the
-                              authorization boundary — see comments in file)
-drizzle/0000_init.sql        Hand-written initial migration
-scripts/migrate.ts           Custom migration runner
-scripts/seed.ts              Dev-only seed data
-tests/                       node:test suite
+    auth.ts                 Authentication/authorization boundaries
+    authorization.ts        Role + organization authorization rules
+    tenant.ts               Server-derived tenant context constants/types
+    session.ts              DB-backed session lifecycle
+    audit.ts                Tenant-scoped audit writer
+    login-rate-limit.ts     Tenant-aware failed-login throttling
+    leave-rules.ts          Tenant-scoped leave rules
+  middleware.ts              UX redirect/cache controls only
+
+drizzle/
+  0000_init.sql
+  0001_phase1_1_security.sql
+  0002_attendance_clock_order_insert_guard.sql
+  0003_multi_tenant_foundation.sql
+
+scripts/
+  migrate.ts                Transactional migration runner
+  seed.ts                   Development-only seed
+  start.ts                  Production startup validation
+  verify-phase1-1.sh        Phase 1.1 local verification helper
+
+tests/
+  tenant-isolation.test.ts  Cross-tenant read/mutation negatives
+  tenant-migration.test.ts Populated legacy-schema migration test
 ```
 
-## Known limitations (honest, not hidden)
+## Scope deliberately left for later
 
-- Leave balances are tracked per calendar year; a request spanning a year
-  boundary (e.g. Dec 30 – Jan 2) is checked against the start date's year
-  only. Fine for Phase 1, worth revisiting before Phase 4 payroll work.
-- Attendance records are only ever created with `status: 'present'` when an
-  employee clocks in. There is no scheduled job yet to mark employees
-  `absent` at end-of-day if they never clocked in — the dashboard's "Absent
-  Today" figure is derived (`active employees − present − on leave`), not
-  from a stored `absent` row. This is accurate, not fabricated, but a
-  proper end-of-day job is a natural Phase 1.1 addition.
-- No automated CI is configured; `npm test`/`npm run lint`/`npm run
-  typecheck` are meant to be run manually or wired into your own CI.
+Not part of Phase 1.2a:
 
-## Git
+- organization settings
+- organization branding
+- subscription/billing
+- commercial licensing
+- holiday calendars
+- attendance policy configuration
+- leave policy configuration
+- employee import/export
+- notifications
+- password reset
+- email verification
+- document management
+- backups/restore automation
+- monitoring/observability platform
+- recruiting/ATS
+- onboarding
+- expenses/helpdesk/performance/OKRs
+- payroll/statutory engine
+- analytics
 
-This repo has not been initialized with git or pushed anywhere from the
-sandbox (no network access there). To publish:
+These must be built on top of the tenant foundation rather than alongside it.
+
+## Known current limitations
+
+- The current login identity remains globally unique by email. This is deliberate for Phase 1.2a because the current login flow resolves the account before authentication and does not accept a client-trusted organization selector. A future organization-aware identity/login flow can be introduced as a separate productization step.
+- Organization creation and customer onboarding UI are not included in this pass.
+- There is no subscription, licence-key or billing system yet.
+- Leave requests spanning calendar years still follow the existing Phase 1 calendar-year balance behavior.
+- Attendance still derives "Absent Today" from active employees minus present/on-leave counts; no end-of-day absence job exists yet.
+
+## Release tags
+
+For the already-merged Phase 1.1 hardening release:
 
 ```bash
-cd syj-hcm
-git init
-git add -A
-git commit -m "feat: SYJ-HCM Phase 1 - core HR (employees, leave, attendance, auth, dashboard)"
-git branch -M main
-git remote add origin https://github.com/SHalimoosavi/SYJ-HCM.git
-git push -u origin main
+git tag -a v0.9.2-alpha -m "SYJ-HCM Phase 1.1 production hardening"
+git push origin v0.9.2-alpha
 ```
+
+For the separate Phase 1.2a tenant foundation after validation:
+
+```bash
+git tag -a v0.9.3-alpha -m "SYJ-HCM Phase 1.2a multi-tenant foundation"
+git push origin v0.9.3-alpha
+```
+
+Do not tag the tenant foundation as `v0.9.2-alpha`; that release name is reserved for the already-merged Phase 1.1 hardening/documentation correction.

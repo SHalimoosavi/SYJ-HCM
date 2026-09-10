@@ -3,6 +3,7 @@ import { auditLogs } from '@/db/schema';
 import { nanoid } from 'nanoid';
 
 export type AuditParams = {
+  organizationId: string;
   actorUserId: string | null;
   action: string;
   entityType: string;
@@ -18,6 +19,7 @@ function serializeMetadata(metadata?: Record<string, unknown>): string | null {
 export async function recordAudit(params: AuditParams): Promise<void> {
   await db.insert(auditLogs).values({
     id: nanoid(),
+    organizationId: params.organizationId,
     actorUserId: params.actorUserId,
     action: params.action,
     entityType: params.entityType,
@@ -34,11 +36,13 @@ export async function recordAudit(params: AuditParams): Promise<void> {
 export function recordAuditSync(params: AuditParams): void {
   sqlite
     .prepare(`
-      INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO audit_logs
+        (id, organization_id, actor_user_id, action, entity_type, entity_id, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       nanoid(),
+      params.organizationId,
       params.actorUserId,
       params.action,
       params.entityType,

@@ -4,9 +4,10 @@
  * This is intentionally NOT run automatically on migrate/build/start.
  */
 import { db } from '../src/db/client';
-import { departments, employees, users, leaveTypes, leaveBalances } from '../src/db/schema';
+import { organizations, departments, employees, users, leaveTypes, leaveBalances } from '../src/db/schema';
 import { hashPassword } from '../src/lib/password';
 import { nanoid } from 'nanoid';
+import { DEFAULT_ORGANIZATION_ID } from '../src/lib/tenant';
 
 async function main() {
   if (process.env.ALLOW_DEV_SEED !== 'true') {
@@ -20,16 +21,19 @@ async function main() {
     return;
   }
 
+  await db.insert(organizations).values({ id: DEFAULT_ORGANIZATION_ID, name: 'Default Organization', slug: 'default', status: 'active' });
+
   const engDeptId = nanoid();
   const hrDeptId = nanoid();
   await db.insert(departments).values([
-    { id: engDeptId, name: 'Engineering' },
-    { id: hrDeptId, name: 'Human Resources' }
+    { id: engDeptId, organizationId: DEFAULT_ORGANIZATION_ID, name: 'Engineering' },
+    { id: hrDeptId, organizationId: DEFAULT_ORGANIZATION_ID, name: 'Human Resources' }
   ]);
 
   const adminEmployeeId = nanoid();
   await db.insert(employees).values({
     id: adminEmployeeId,
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeCode: 'EMP-0001',
     firstName: 'Ali',
     lastName: 'Admin',
@@ -44,6 +48,7 @@ async function main() {
   const { hash, salt } = hashPassword('ChangeMe123!');
   await db.insert(users).values({
     id: nanoid(),
+    organizationId: DEFAULT_ORGANIZATION_ID,
     email: 'admin@syj-hcm.local',
     passwordHash: hash,
     passwordSalt: salt,
@@ -55,6 +60,7 @@ async function main() {
   const employeeEmployeeId = nanoid();
   await db.insert(employees).values({
     id: employeeEmployeeId,
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeCode: 'EMP-0002',
     firstName: 'Sana',
     lastName: 'Sample',
@@ -69,6 +75,7 @@ async function main() {
   const { hash: h2, salt: s2 } = hashPassword('ChangeMe123!');
   await db.insert(users).values({
     id: nanoid(),
+    organizationId: DEFAULT_ORGANIZATION_ID,
     email: 'sana@syj-hcm.local',
     passwordHash: h2,
     passwordSalt: s2,
@@ -80,16 +87,16 @@ async function main() {
   const annualId = nanoid();
   const sickId = nanoid();
   await db.insert(leaveTypes).values([
-    { id: annualId, name: 'Annual Leave', annualQuota: 18, isPaid: true },
-    { id: sickId, name: 'Sick Leave', annualQuota: 10, isPaid: true }
+    { id: annualId, organizationId: DEFAULT_ORGANIZATION_ID, name: 'Annual Leave', annualQuota: 18, isPaid: true },
+    { id: sickId, organizationId: DEFAULT_ORGANIZATION_ID, name: 'Sick Leave', annualQuota: 10, isPaid: true }
   ]);
 
   const year = new Date().getFullYear();
   await db.insert(leaveBalances).values([
-    { id: nanoid(), employeeId: adminEmployeeId, leaveTypeId: annualId, year, allocated: 18, used: 0 },
-    { id: nanoid(), employeeId: adminEmployeeId, leaveTypeId: sickId, year, allocated: 10, used: 0 },
-    { id: nanoid(), employeeId: employeeEmployeeId, leaveTypeId: annualId, year, allocated: 18, used: 0 },
-    { id: nanoid(), employeeId: employeeEmployeeId, leaveTypeId: sickId, year, allocated: 10, used: 0 }
+    { id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId: adminEmployeeId, leaveTypeId: annualId, year, allocated: 18, used: 0 },
+    { id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId: adminEmployeeId, leaveTypeId: sickId, year, allocated: 10, used: 0 },
+    { id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId: employeeEmployeeId, leaveTypeId: annualId, year, allocated: 18, used: 0 },
+    { id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId: employeeEmployeeId, leaveTypeId: sickId, year, allocated: 10, used: 0 }
   ]);
 
   console.log('Seed complete.');

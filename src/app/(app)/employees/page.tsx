@@ -16,7 +16,7 @@ type SearchParams = {
 };
 
 export default async function EmployeesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requireRole('admin', 'hr');
+  const user = await requireRole('admin', 'hr');
 
   const resolvedSearchParams = await searchParams;
   const q = resolvedSearchParams.q?.trim() || '';
@@ -25,18 +25,17 @@ export default async function EmployeesPage({ searchParams }: { searchParams: Pr
   const sort = resolvedSearchParams.sort || 'name_asc';
   const page = Math.max(parseInt(resolvedSearchParams.page || '1', 10) || 1, 1);
 
-  const allDepartments = await db.select().from(departments);
+  const allDepartments = await db.select().from(departments).where(eq(departments.organizationId, user.organizationId));
 
-  const conditions = [];
+  const conditions = [eq(employees.organizationId, user.organizationId)];
   if (q) {
-    conditions.push(
-      or(
-        like(employees.firstName, `%${q}%`),
-        like(employees.lastName, `%${q}%`),
-        like(employees.workEmail, `%${q}%`),
-        like(employees.employeeCode, `%${q}%`)
-      )
+    const searchCondition = or(
+      like(employees.firstName, `%${q}%`),
+      like(employees.lastName, `%${q}%`),
+      like(employees.workEmail, `%${q}%`),
+      like(employees.employeeCode, `%${q}%`)
     );
+    if (searchCondition) conditions.push(searchCondition);
   }
   if (departmentFilter) {
     conditions.push(eq(employees.departmentId, departmentFilter));

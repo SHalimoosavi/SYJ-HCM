@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser, type CurrentUser } from './session';
 import { recordAudit } from './audit';
 import { isRoleAllowed } from './authorization';
+import { DEFAULT_ORGANIZATION_ID } from './tenant';
 
 export class ForbiddenError extends Error {
   constructor(message = 'You do not have permission to perform this action.') {
@@ -17,6 +18,7 @@ export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) {
     await recordAudit({
+      organizationId: DEFAULT_ORGANIZATION_ID,
       actorUserId: null,
       action: 'authorization_failed',
       entityType: 'authorization',
@@ -36,6 +38,7 @@ export async function requireRole(...roles: Array<CurrentUser['role']>): Promise
   const user = await requireUser();
   if (!isRoleAllowed(user.role, roles)) {
     await recordAudit({
+      organizationId: user.organizationId,
       actorUserId: user.id,
       action: 'authorization_failed',
       entityType: 'authorization',
@@ -57,6 +60,7 @@ export async function requireUserForAction(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) {
     await recordAudit({
+      organizationId: DEFAULT_ORGANIZATION_ID,
       actorUserId: null,
       action: 'authorization_failed',
       entityType: 'authorization',
@@ -74,6 +78,7 @@ export async function requireRoleForAction(
   const user = await requireUserForAction();
   if (!isRoleAllowed(user.role, roles)) {
     await recordAudit({
+      organizationId: user.organizationId,
       actorUserId: user.id,
       action: 'authorization_failed',
       entityType: 'authorization',

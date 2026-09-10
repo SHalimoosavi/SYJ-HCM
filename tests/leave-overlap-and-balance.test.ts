@@ -5,11 +5,13 @@ import { db } from '../src/db/client';
 import { employees, leaveTypes, leaveBalances, leaveRequests } from '../src/db/schema';
 import { hasOverlappingLeave, getRemainingBalance } from '../src/lib/leave-rules';
 import { nanoid } from 'nanoid';
+import { DEFAULT_ORGANIZATION_ID } from '../src/lib/tenant';
 
 async function makeEmployee() {
   const id = nanoid();
   await db.insert(employees).values({
     id,
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeCode: `TEST-${id.slice(0, 6)}`,
     firstName: 'Test',
     lastName: 'Employee',
@@ -22,13 +24,13 @@ async function makeEmployee() {
 
 async function makeLeaveType(annualQuota: number) {
   const id = nanoid();
-  await db.insert(leaveTypes).values({ id, name: `Test Leave ${id.slice(0, 4)}`, annualQuota, isPaid: true });
+  await db.insert(leaveTypes).values({ id, organizationId: DEFAULT_ORGANIZATION_ID, name: `Test Leave ${id.slice(0, 4)}`, annualQuota, isPaid: true });
   return id;
 }
 
 test('no overlap when employee has no existing leave', async () => {
   const employeeId = await makeEmployee();
-  const overlaps = await hasOverlappingLeave(employeeId, '2026-09-10', '2026-09-12');
+  const overlaps = await hasOverlappingLeave(DEFAULT_ORGANIZATION_ID, employeeId, '2026-09-10', '2026-09-12');
   assert.equal(overlaps, false);
 });
 
@@ -38,6 +40,7 @@ test('detects an overlapping pending request', async () => {
 
   await db.insert(leaveRequests).values({
     id: nanoid(),
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
     leaveTypeId,
     startDate: '2026-09-10',
@@ -46,7 +49,7 @@ test('detects an overlapping pending request', async () => {
     status: 'pending'
   });
 
-  const overlaps = await hasOverlappingLeave(employeeId, '2026-09-12', '2026-09-18');
+  const overlaps = await hasOverlappingLeave(DEFAULT_ORGANIZATION_ID, employeeId, '2026-09-12', '2026-09-18');
   assert.equal(overlaps, true);
 });
 
@@ -56,6 +59,7 @@ test('does not flag a non-overlapping request as overlapping', async () => {
 
   await db.insert(leaveRequests).values({
     id: nanoid(),
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
     leaveTypeId,
     startDate: '2026-09-01',
@@ -64,7 +68,7 @@ test('does not flag a non-overlapping request as overlapping', async () => {
     days: 5
   });
 
-  const overlaps = await hasOverlappingLeave(employeeId, '2026-09-10', '2026-09-12');
+  const overlaps = await hasOverlappingLeave(DEFAULT_ORGANIZATION_ID, employeeId, '2026-09-10', '2026-09-12');
   assert.equal(overlaps, false);
 });
 
@@ -74,6 +78,7 @@ test('ignores cancelled/rejected requests when checking overlap', async () => {
 
   await db.insert(leaveRequests).values({
     id: nanoid(),
+    organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
     leaveTypeId,
     startDate: '2026-09-10',
@@ -82,7 +87,7 @@ test('ignores cancelled/rejected requests when checking overlap', async () => {
     status: 'rejected'
   });
 
-  const overlaps = await hasOverlappingLeave(employeeId, '2026-09-10', '2026-09-15');
+  const overlaps = await hasOverlappingLeave(DEFAULT_ORGANIZATION_ID, employeeId, '2026-09-10', '2026-09-15');
   assert.equal(overlaps, false);
 });
 
@@ -91,9 +96,9 @@ test('remaining balance reflects allocated minus used', async () => {
   const leaveTypeId = await makeLeaveType(18);
   const year = 2026;
 
-  await db.insert(leaveBalances).values({ id: nanoid(), employeeId, leaveTypeId, year, allocated: 18, used: 5 });
+  await db.insert(leaveBalances).values({ id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId, leaveTypeId, year, allocated: 18, used: 5 });
 
-  const balance = await getRemainingBalance(employeeId, leaveTypeId, year);
+  const balance = await getRemainingBalance(DEFAULT_ORGANIZATION_ID, employeeId, leaveTypeId, year);
   assert.ok(balance);
   assert.equal(balance!.remaining, 13);
 });
@@ -102,6 +107,6 @@ test('returns null when no balance record exists for that year', async () => {
   const employeeId = await makeEmployee();
   const leaveTypeId = await makeLeaveType(18);
 
-  const balance = await getRemainingBalance(employeeId, leaveTypeId, 2099);
+  const balance = await getRemainingBalance(DEFAULT_ORGANIZATION_ID, employeeId, leaveTypeId, 2099);
   assert.equal(balance, null);
 });

@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { db, sqlite } from '@/db/client';
 import { sessions, users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { isSessionActive, SESSION_ABSOLUTE_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from './session-policy';
 
 const COOKIE_NAME = 'syj_session';
@@ -54,10 +54,11 @@ async function setSessionCookie(sessionId: string, expiresAt: string): Promise<v
   });
 }
 
-export async function createSession(userId: string): Promise<void> {
+export async function createSession(userId: string, organizationId: string): Promise<void> {
   const record = makeSessionRecord();
   await db.insert(sessions).values({
     id: record.id,
+    organizationId,
     userId,
     expiresAt: record.expiresAt,
     lastActiveAt: record.lastActiveAt
@@ -65,14 +66,14 @@ export async function createSession(userId: string): Promise<void> {
   await setSessionCookie(record.id, record.expiresAt);
 }
 
-export function createSessionRecordInTransaction(userId: string): { id: string; expiresAt: string; lastActiveAt: string } {
+export function createSessionRecordInTransaction(userId: string, organizationId: string): { id: string; expiresAt: string; lastActiveAt: string } {
   const record = makeSessionRecord();
   sqlite
     .prepare(`
-      INSERT INTO sessions (id, user_id, expires_at, last_active_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO sessions (id, organization_id, user_id, expires_at, last_active_at)
+      VALUES (?, ?, ?, ?, ?)
     `)
-    .run(record.id, userId, record.expiresAt, record.lastActiveAt);
+    .run(record.id, organizationId, userId, record.expiresAt, record.lastActiveAt);
   return record;
 }
 
@@ -86,25 +87,33 @@ export async function destroySession(): Promise<void> {
   if (raw) {
     const sessionId = verify(raw);
     if (sessionId) {
-      await db.delete(sessions).where(eq(sessions.id, sessionId));
+      const sessionRows = await db
+        .select({ organizationId: sessions.organizationId })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      const organizationId = sessionRows[0]?.organizationId;
+      if (organizationId) {
+        await db.delete(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, organizationId)));
+      }
     }
   }
   cookieStore.delete(COOKIE_NAME);
 }
 
-export async function destroyAllSessionsForUser(userId: string): Promise<void> {
-  await db.delete(sessions).where(eq(sessions.userId, userId));
+export async function destroyAllSessionsForUser(userId: string, organizationId: string): Promise<void> {
+  await db.delete(sessions).where(and(eq(sessions.userId, userId), eq(sessions.organizationId, organizationId)));
 }
 
-export async function destroyOtherSessionsForUser(userId: string): Promise<number> {
+export async function destroyOtherSessionsForUser(userId: string, organizationId: string): Promise<number> {
   const cookieStore = await cookies();
   const raw = cookieStore.get(COOKIE_NAME)?.value;
   const currentSessionId = raw ? verify(raw) : null;
   if (!currentSessionId) return 0;
 
   const result = sqlite
-    .prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?')
-    .run(userId, currentSessionId);
+    .prepare('DELETE FROM sessions WHERE organization_id = ? AND user_id = ? AND id <> ?')
+    .run(organizationId, userId, currentSessionId);
   return Number(result.changes);
 }
 
@@ -113,6 +122,7 @@ export type CurrentUser = {
   email: string;
   role: 'admin' | 'hr' | 'employee';
   employeeId: string | null;
+  organizationId: string;
 };
 
 /**
@@ -132,6 +142,8 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 
   const rows = await db
     .select({
+      sessionOrganizationId: sessions.organizationId,
+      userOrganizationId: users.organizationId,
       sessionExpiresAt: sessions.expiresAt,
       sessionLastActiveAt: sessions.lastActiveAt,
       userId: users.id,
@@ -142,11 +154,11 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    .where(eq(sessions.id, sessionId))
+    .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, users.organizationId)))
     .limit(1);
 
   const row = rows[0];
-  if (!row || !row.isActive) return null;
+  if (!row || !row.isActive || row.sessionOrganizationId !== row.userOrganizationId) return null;
 
   const now = Date.now();
   const lastActive = new Date(row.sessionLastActiveAt).getTime();
@@ -158,8 +170,14 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     await db
       .update(sessions)
       .set({ lastActiveAt: new Date(now).toISOString() })
-      .where(eq(sessions.id, sessionId));
+      .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, row.sessionOrganizationId)));
   }
 
-  return { id: row.userId, email: row.email, role: row.role, employeeId: row.employeeId };
+  return {
+    id: row.userId,
+    email: row.email,
+    role: row.role,
+    employeeId: row.employeeId,
+    organizationId: row.userOrganizationId
+  };
 }

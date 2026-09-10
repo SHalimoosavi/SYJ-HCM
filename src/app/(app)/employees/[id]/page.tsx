@@ -2,20 +2,20 @@ import { notFound } from 'next/navigation';
 import { requireRole } from '@/lib/auth';
 import { db } from '@/db/client';
 import { employees, departments, leaveBalances, leaveTypes } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { EditEmployeeForm } from './edit-employee-form';
 import { setEmployeeStatusAction } from '../actions';
 import { employmentStatusBadgeClass, formatDate } from '@/lib/format';
 
 export default async function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireRole('admin', 'hr');
+  const user = await requireRole('admin', 'hr');
 
-  const rows = await db.select().from(employees).where(eq(employees.id, id)).limit(1);
+  const rows = await db.select().from(employees).where(and(eq(employees.id, id), eq(employees.organizationId, user.organizationId))).limit(1);
   const employee = rows[0];
   if (!employee) notFound();
 
-  const allDepartments = await db.select().from(departments);
+  const allDepartments = await db.select().from(departments).where(eq(departments.organizationId, user.organizationId));
 
   const balances = await db
     .select({
@@ -26,7 +26,7 @@ export default async function EmployeeProfilePage({ params }: { params: Promise<
     })
     .from(leaveBalances)
     .innerJoin(leaveTypes, eq(leaveBalances.leaveTypeId, leaveTypes.id))
-    .where(eq(leaveBalances.employeeId, employee.id));
+    .where(and(eq(leaveBalances.organizationId, user.organizationId), eq(leaveBalances.employeeId, employee.id), eq(leaveTypes.organizationId, user.organizationId)));
 
   const toggleAction =
     employee.employmentStatus === 'active'

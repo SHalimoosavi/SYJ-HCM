@@ -13,8 +13,8 @@ function getSecret(): string {
   return secret;
 }
 
-export function getLoginRateLimitKey(email: string, clientAddress: string): string {
-  return createHmac('sha256', getSecret()).update(`${email}\n${clientAddress}`).digest('hex');
+export function getLoginRateLimitKey(email: string, clientAddress: string, organizationId: string): string {
+  return createHmac('sha256', getSecret()).update(`${organizationId}\n${email}\n${clientAddress}`).digest('hex');
 }
 
 function normalizeWindow(nowMs: number, startedAt: string): boolean {
@@ -27,10 +27,10 @@ export type LoginRateLimitStatus = {
   retryAfterSeconds: number;
 };
 
-export function checkLoginRateLimit(key: string, now = new Date()): LoginRateLimitStatus {
+export function checkLoginRateLimit(key: string, organizationId: string, now = new Date()): LoginRateLimitStatus {
   const row = sqlite
-    .prepare('SELECT failed_attempts, window_started_at, locked_until FROM login_rate_limits WHERE key = ?')
-    .get(key) as { failed_attempts: number; window_started_at: string; locked_until: string | null } | undefined;
+    .prepare('SELECT failed_attempts, window_started_at, locked_until FROM login_rate_limits WHERE organization_id = ? AND key = ?')
+    .get(organizationId, key) as { failed_attempts: number; window_started_at: string; locked_until: string | null } | undefined;
 
   if (!row) return { allowed: true, retryAfterSeconds: 0 };
 
@@ -49,16 +49,18 @@ export function checkLoginRateLimit(key: string, now = new Date()): LoginRateLim
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-export function recordFailedLogin(key: string, now = new Date()): LoginRateLimitStatus {
+export function recordFailedLogin(key: string, organizationId: string, now = new Date()): LoginRateLimitStatus {
   const nowIso = now.toISOString();
-  const windowStartedIso = new Date(now.getTime()).toISOString();
+  const windowStartedIso = now.toISOString();
 
   sqlite.exec('BEGIN IMMEDIATE');
   try {
-    sqlite.prepare('DELETE FROM login_rate_limits WHERE updated_at < ?').run(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+    sqlite
+      .prepare('DELETE FROM login_rate_limits WHERE organization_id = ? AND updated_at < ?')
+      .run(organizationId, new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
     const existing = sqlite
-      .prepare('SELECT failed_attempts, window_started_at, locked_until FROM login_rate_limits WHERE key = ?')
-      .get(key) as { failed_attempts: number; window_started_at: string; locked_until: string | null } | undefined;
+      .prepare('SELECT failed_attempts, window_started_at, locked_until FROM login_rate_limits WHERE organization_id = ? AND key = ?')
+      .get(organizationId, key) as { failed_attempts: number; window_started_at: string; locked_until: string | null } | undefined;
 
     let attempts = 1;
     let windowStarted = windowStartedIso;
@@ -75,15 +77,16 @@ export function recordFailedLogin(key: string, now = new Date()): LoginRateLimit
     sqlite
       .prepare(`
         INSERT INTO login_rate_limits
-          (key, failed_attempts, window_started_at, locked_until, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+          (key, organization_id, failed_attempts, window_started_at, locked_until, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET
+          organization_id = excluded.organization_id,
           failed_attempts = excluded.failed_attempts,
           window_started_at = excluded.window_started_at,
           locked_until = excluded.locked_until,
           updated_at = excluded.updated_at
       `)
-      .run(key, attempts, windowStarted, lockedUntil, nowIso);
+      .run(key, organizationId, attempts, windowStarted, lockedUntil, nowIso);
 
     sqlite.exec('COMMIT');
     return lockedUntil
@@ -99,6 +102,6 @@ export function recordFailedLogin(key: string, now = new Date()): LoginRateLimit
   }
 }
 
-export function clearLoginFailures(key: string): void {
-  sqlite.prepare('DELETE FROM login_rate_limits WHERE key = ?').run(key);
+export function clearLoginFailures(key: string, organizationId: string): void {
+  sqlite.prepare('DELETE FROM login_rate_limits WHERE organization_id = ? AND key = ?').run(organizationId, key);
 }

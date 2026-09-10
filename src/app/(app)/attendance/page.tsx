@@ -18,7 +18,7 @@ export default async function AttendancePage() {
         await db
           .select()
           .from(attendanceRecords)
-          .where(and(eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, workDate)))
+          .where(and(eq(attendanceRecords.organizationId, user.organizationId), eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, workDate)))
           .limit(1)
       )[0] || null
     : null;
@@ -33,7 +33,7 @@ export default async function AttendancePage() {
           status: attendanceRecords.status
         })
         .from(attendanceRecords)
-        .where(eq(attendanceRecords.employeeId, user.employeeId))
+        .where(and(eq(attendanceRecords.organizationId, user.organizationId), eq(attendanceRecords.employeeId, user.employeeId)))
         .orderBy(desc(attendanceRecords.workDate))
         .limit(30)
     : [];
@@ -50,8 +50,8 @@ export default async function AttendancePage() {
           designation: employees.designation
         })
         .from(attendanceRecords)
-        .innerJoin(employees, eq(attendanceRecords.employeeId, employees.id))
-        .where(eq(attendanceRecords.workDate, workDate))
+        .innerJoin(employees, and(eq(attendanceRecords.employeeId, employees.id), eq(attendanceRecords.organizationId, employees.organizationId)))
+        .where(and(eq(attendanceRecords.organizationId, user.organizationId), eq(employees.organizationId, user.organizationId), eq(attendanceRecords.workDate, workDate)))
     : [];
 
   return (
