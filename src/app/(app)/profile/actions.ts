@@ -2,7 +2,7 @@
 
 import { db, sqlite, withSqliteTransactionSync } from '@/db/client';
 import { users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requireUserForAction } from '@/lib/auth';
 import { verifyPassword, hashPassword } from '@/lib/password';
 import { recordAudit, recordAuditSync } from '@/lib/audit';
@@ -30,7 +30,7 @@ export async function changePasswordAction(
     return { error: 'New password and confirmation do not match.', success: false };
   }
 
-  const rows = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+  const rows = await db.select().from(users).where(and(eq(users.id, user.id), eq(users.organizationId, user.organizationId))).limit(1);
   const record = rows[0];
   if (!record) {
     return { error: 'Account not found.', success: false };
@@ -45,20 +45,20 @@ export async function changePasswordAction(
   const now = new Date().toISOString();
 
   const newSession = withSqliteTransactionSync(() => {
-    const sessionRecord = createSessionRecordInTransaction(user.id);
+    const sessionRecord = createSessionRecordInTransaction(user.id, user.organizationId);
     // Password rotation invalidates every pre-existing session, including the
     // current one. The transaction immediately creates the replacement.
-    const deleteStatement = `DELETE FROM sessions WHERE user_id = ? AND id <> ?`;
+    const deleteStatement = `DELETE FROM sessions WHERE organization_id = ? AND user_id = ? AND id <> ?`;
     // Keep the replacement session while removing all old sessions.
-    sqlite.prepare(deleteStatement).run(user.id, sessionRecord.id);
+    sqlite.prepare(deleteStatement).run(user.organizationId, user.id, sessionRecord.id);
     sqlite
       .prepare(`
         UPDATE users
         SET password_hash = ?, password_salt = ?, updated_at = ?
-        WHERE id = ?
+        WHERE organization_id = ? AND id = ?
       `)
-      .run(hash, salt, now, user.id);
-    recordAuditSync({ actorUserId: user.id, action: 'password_changed', entityType: 'user', entityId: user.id });
+      .run(hash, salt, now, user.organizationId, user.id);
+    recordAuditSync({ organizationId: user.organizationId, actorUserId: user.id, action: 'password_changed', entityType: 'user', entityId: user.id });
     return sessionRecord;
   });
 
@@ -68,8 +68,9 @@ export async function changePasswordAction(
 
 export async function signOutOtherSessionsAction(): Promise<{ count: number }> {
   const user = await requireUserForAction();
-  const count = await destroyOtherSessionsForUser(user.id);
+  const count = await destroyOtherSessionsForUser(user.id, user.organizationId);
   await recordAudit({
+    organizationId: user.organizationId,
     actorUserId: user.id,
     action: 'sessions_revoked',
     entityType: 'user',

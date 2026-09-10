@@ -48,7 +48,7 @@ try {
     fail(`Pending migrations: ${pending.join(', ')}. Run npm run db:migrate before npm start.`);
   }
 
-  const requiredTables = ['users', 'sessions', 'employees', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs'];
+  const requiredTables = ['organizations', 'users', 'sessions', 'login_rate_limits', 'employees', 'departments', 'leave_types', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs'];
   for (const table of requiredTables) {
     const exists = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")

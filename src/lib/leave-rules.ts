@@ -30,6 +30,7 @@ export function validateDateRange(startDate: string, endDate: string): string | 
  * when re-checking on approval).
  */
 export async function hasOverlappingLeave(
+  organizationId: string,
   employeeId: string,
   startDate: string,
   endDate: string,
@@ -44,6 +45,7 @@ export async function hasOverlappingLeave(
     .from(leaveRequests)
     .where(
       and(
+        eq(leaveRequests.organizationId, organizationId),
         eq(leaveRequests.employeeId, employeeId),
         inArray(leaveRequests.status, ['pending', 'approved']),
         excludeRequestId ? ne(leaveRequests.id, excludeRequestId) : undefined
@@ -65,6 +67,7 @@ export async function hasOverlappingLeave(
  * or null if no balance record exists (treated as zero allowance).
  */
 export async function getRemainingBalance(
+  organizationId: string,
   employeeId: string,
   leaveTypeId: string,
   year: number
@@ -74,6 +77,7 @@ export async function getRemainingBalance(
     .from(leaveBalances)
     .where(
       and(
+        eq(leaveBalances.organizationId, organizationId),
         eq(leaveBalances.employeeId, employeeId),
         eq(leaveBalances.leaveTypeId, leaveTypeId),
         eq(leaveBalances.year, year)

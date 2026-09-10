@@ -2,7 +2,7 @@
 
 import { db, sqlite, withSqliteTransactionSync } from '@/db/client';
 import { employees, departments, leaveTypes, leaveBalances } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requireRoleForAction } from '@/lib/auth';
 import { recordAuditSync } from '@/lib/audit';
 import { nanoid } from 'nanoid';
@@ -16,12 +16,23 @@ function requiredString(formData: FormData, key: string): string {
   return value;
 }
 
-async function assertUniqueCodeAndEmail(code: string, email: string, excludeId?: string) {
-  const byCode = await db.select().from(employees).where(eq(employees.employeeCode, code));
+
+async function assertDepartmentInOrganization(organizationId: string, departmentId: string | null): Promise<void> {
+  if (!departmentId) return;
+  const rows = await db
+    .select({ id: departments.id })
+    .from(departments)
+    .where(and(eq(departments.id, departmentId), eq(departments.organizationId, organizationId)))
+    .limit(1);
+  if (!rows[0]) throw new Error('Selected department is not part of your organization.');
+}
+
+async function assertUniqueCodeAndEmail(organizationId: string, code: string, email: string, excludeId?: string) {
+  const byCode = await db.select().from(employees).where(and(eq(employees.organizationId, organizationId), eq(employees.employeeCode, code)));
   if (byCode.some((e) => e.id !== excludeId)) {
     throw new Error(`Employee code "${code}" is already in use.`);
   }
-  const byEmail = await db.select().from(employees).where(eq(employees.workEmail, email));
+  const byEmail = await db.select().from(employees).where(and(eq(employees.organizationId, organizationId), eq(employees.workEmail, email)));
   if (byEmail.some((e) => e.id !== excludeId)) {
     throw new Error(`Work email "${email}" is already in use.`);
   }
@@ -55,13 +66,14 @@ export async function createEmployeeAction(
   }
 
   try {
-    await assertUniqueCodeAndEmail(employeeCode, workEmail);
+    await assertDepartmentInOrganization(actor.organizationId, departmentId);
+    await assertUniqueCodeAndEmail(actor.organizationId, employeeCode, workEmail);
   } catch (err) {
     return { error: (err as Error).message };
   }
 
   const id = nanoid();
-  const types = await db.select().from(leaveTypes);
+  const types = await db.select().from(leaveTypes).where(eq(leaveTypes.organizationId, actor.organizationId));
   const year = new Date().getFullYear();
 
   try {
@@ -69,20 +81,20 @@ export async function createEmployeeAction(
       sqlite
         .prepare(`
           INSERT INTO employees
-            (id, employee_code, first_name, last_name, work_email, date_of_joining, designation, department_id, employment_type, location, phone, employment_status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            (id, organization_id, employee_code, first_name, last_name, work_email, date_of_joining, designation, department_id, employment_type, location, phone, employment_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         `)
-        .run(id, employeeCode, firstName, lastName, workEmail, dateOfJoining, designation, departmentId, employmentType, location, phone);
+        .run(id, actor.organizationId, employeeCode, firstName, lastName, workEmail, dateOfJoining, designation, departmentId, employmentType, location, phone);
 
       const balanceStatement = sqlite.prepare(`
-        INSERT INTO leave_balances (id, employee_id, leave_type_id, year, allocated, used)
-        VALUES (?, ?, ?, ?, ?, 0)
+        INSERT INTO leave_balances (id, organization_id, employee_id, leave_type_id, year, allocated, used)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
       `);
       for (const type of types) {
-        balanceStatement.run(nanoid(), id, type.id, year, type.annualQuota);
+        balanceStatement.run(nanoid(), actor.organizationId, id, type.id, year, type.annualQuota);
       }
 
-      recordAuditSync({ actorUserId: actor.id, action: 'employee_created', entityType: 'employee', entityId: id });
+      recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'employee_created', entityType: 'employee', entityId: id });
     });
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Unable to create employee.' };
@@ -99,7 +111,7 @@ export async function updateEmployeeAction(
 ): Promise<EmployeeFormState> {
   const actor = await requireRoleForAction('admin', 'hr');
 
-  const existing = await db.select().from(employees).where(eq(employees.id, employeeId)).limit(1);
+  const existing = await db.select().from(employees).where(and(eq(employees.id, employeeId), eq(employees.organizationId, actor.organizationId))).limit(1);
   const existingEmployee = existing[0];
   if (!existingEmployee) {
     return { error: 'Employee not found.' };
@@ -125,7 +137,8 @@ export async function updateEmployeeAction(
   }
 
   try {
-    await assertUniqueCodeAndEmail(existingEmployee.employeeCode, workEmail, employeeId);
+    await assertDepartmentInOrganization(actor.organizationId, departmentId);
+    await assertUniqueCodeAndEmail(actor.organizationId, existingEmployee.employeeCode, workEmail, employeeId);
   } catch (err) {
     return { error: (err as Error).message };
   }
@@ -138,10 +151,10 @@ export async function updateEmployeeAction(
           SET first_name = ?, last_name = ?, work_email = ?, designation = ?, department_id = ?,
               employment_type = ?, location = ?, phone = ?, address = ?, emergency_contact_name = ?,
               emergency_contact_phone = ?, updated_at = ?
-          WHERE id = ?
+          WHERE organization_id = ? AND id = ?
         `)
-        .run(firstName, lastName, workEmail, designation, departmentId, employmentType, location, phone, address, emergencyContactName, emergencyContactPhone, new Date().toISOString(), employeeId);
-      recordAuditSync({ actorUserId: actor.id, action: 'employee_updated', entityType: 'employee', entityId: employeeId });
+        .run(firstName, lastName, workEmail, designation, departmentId, employmentType, location, phone, address, emergencyContactName, emergencyContactPhone, new Date().toISOString(), actor.organizationId, employeeId);
+      recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'employee_updated', entityType: 'employee', entityId: employeeId });
     });
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Unable to update employee.' };
@@ -156,10 +169,12 @@ export async function setEmployeeStatusAction(employeeId: string, status: 'activ
   const actor = await requireRoleForAction('admin', 'hr');
 
   withSqliteTransactionSync(() => {
-    sqlite
-      .prepare('UPDATE employees SET employment_status = ?, updated_at = ? WHERE id = ?')
-      .run(status, new Date().toISOString(), employeeId);
+    const result = sqlite
+      .prepare('UPDATE employees SET employment_status = ?, updated_at = ? WHERE organization_id = ? AND id = ?')
+      .run(status, new Date().toISOString(), actor.organizationId, employeeId);
+    if (Number(result.changes) !== 1) throw new Error('Employee not found.');
     recordAuditSync({
+      organizationId: actor.organizationId,
       actorUserId: actor.id,
       action: status === 'active' ? 'employee_activated' : 'employee_deactivated',
       entityType: 'employee',
@@ -172,5 +187,6 @@ export async function setEmployeeStatusAction(employeeId: string, status: 'activ
 }
 
 export async function listDepartments() {
-  return db.select().from(departments);
+  const actor = await requireRoleForAction('admin', 'hr');
+  return db.select().from(departments).where(eq(departments.organizationId, actor.organizationId));
 }

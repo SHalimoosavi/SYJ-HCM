@@ -20,7 +20,7 @@ export default async function DashboardPage() {
         ? db
             .select({ id: attendanceRecords.id, clockInAt: attendanceRecords.clockInAt, clockOutAt: attendanceRecords.clockOutAt })
             .from(attendanceRecords)
-            .where(and(eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, today)))
+            .where(and(eq(attendanceRecords.organizationId, user.organizationId), eq(attendanceRecords.employeeId, user.employeeId), eq(attendanceRecords.workDate, today)))
             .limit(1)
         : Promise.resolve([]),
       user.employeeId
@@ -29,6 +29,7 @@ export default async function DashboardPage() {
             .from(leaveRequests)
             .where(
               and(
+                eq(leaveRequests.organizationId, user.organizationId),
                 eq(leaveRequests.employeeId, user.employeeId),
                 eq(leaveRequests.status, 'approved'),
                 lte(leaveRequests.startDate, today),
@@ -41,7 +42,7 @@ export default async function DashboardPage() {
         ? db
             .select({ id: leaveRequests.id })
             .from(leaveRequests)
-            .where(and(eq(leaveRequests.employeeId, user.employeeId), eq(leaveRequests.status, 'pending')))
+            .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.employeeId, user.employeeId), eq(leaveRequests.status, 'pending')))
         : Promise.resolve([])
     ]);
 
@@ -80,14 +81,14 @@ export default async function DashboardPage() {
 
   const [allEmployees, approvedLeaveToday, pendingLeaveRequests, presentTodayRecords, allDepartments, recentAudit, upcomingLeave] =
     await Promise.all([
-      db.select().from(employees),
+      db.select().from(employees).where(eq(employees.organizationId, user.organizationId)),
       db
         .select()
         .from(leaveRequests)
-        .where(and(eq(leaveRequests.status, 'approved'), lte(leaveRequests.startDate, today), gte(leaveRequests.endDate, today))),
-      db.select().from(leaveRequests).where(eq(leaveRequests.status, 'pending')),
-      db.select().from(attendanceRecords).where(and(eq(attendanceRecords.workDate, today), eq(attendanceRecords.status, 'present'))),
-      db.select().from(departments),
+        .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.status, 'approved'), lte(leaveRequests.startDate, today), gte(leaveRequests.endDate, today))),
+      db.select().from(leaveRequests).where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.status, 'pending'))),
+      db.select().from(attendanceRecords).where(and(eq(attendanceRecords.organizationId, user.organizationId), eq(attendanceRecords.workDate, today), eq(attendanceRecords.status, 'present'))),
+      db.select().from(departments).where(eq(departments.organizationId, user.organizationId)),
       db
         .select({
           id: auditLogs.id,
@@ -98,13 +99,14 @@ export default async function DashboardPage() {
           actorEmail: users.email
         })
         .from(auditLogs)
-        .leftJoin(users, eq(auditLogs.actorUserId, users.id))
+        .leftJoin(users, and(eq(auditLogs.actorUserId, users.id), eq(auditLogs.organizationId, users.organizationId)))
+        .where(eq(auditLogs.organizationId, user.organizationId))
         .orderBy(desc(auditLogs.createdAt))
         .limit(8),
       db
         .select()
         .from(leaveRequests)
-        .where(and(eq(leaveRequests.status, 'approved'), gte(leaveRequests.startDate, today)))
+        .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.status, 'approved'), gte(leaveRequests.startDate, today)))
         .orderBy(leaveRequests.startDate)
         .limit(5)
     ]);

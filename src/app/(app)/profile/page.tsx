@@ -1,7 +1,7 @@
 import { requireUser } from '@/lib/auth';
 import { db } from '@/db/client';
 import { employees, departments, leaveBalances, leaveTypes } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { ChangePasswordForm } from './change-password-form';
 import { SessionManagementForm } from './session-management-form';
 import { formatDate } from '@/lib/format';
@@ -23,8 +23,8 @@ export default async function ProfilePage() {
             departmentName: departments.name
           })
           .from(employees)
-          .leftJoin(departments, eq(employees.departmentId, departments.id))
-          .where(eq(employees.id, user.employeeId))
+          .leftJoin(departments, and(eq(employees.departmentId, departments.id), eq(employees.organizationId, departments.organizationId)))
+          .where(and(eq(employees.organizationId, user.organizationId), eq(employees.id, user.employeeId)))
           .limit(1)
       )[0]
     : null;
@@ -37,8 +37,8 @@ export default async function ProfilePage() {
           used: leaveBalances.used
         })
         .from(leaveBalances)
-        .innerJoin(leaveTypes, eq(leaveBalances.leaveTypeId, leaveTypes.id))
-        .where(eq(leaveBalances.employeeId, user.employeeId))
+        .innerJoin(leaveTypes, and(eq(leaveBalances.leaveTypeId, leaveTypes.id), eq(leaveBalances.organizationId, leaveTypes.organizationId)))
+        .where(and(eq(leaveBalances.organizationId, user.organizationId), eq(leaveTypes.organizationId, user.organizationId), eq(leaveBalances.employeeId, user.employeeId)))
     : [];
 
   return (
