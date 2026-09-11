@@ -14,9 +14,9 @@ import {
 import { canManageOrganization } from '../src/lib/authorization';
 import type { CurrentUser } from '../src/lib/session';
 
-const admin: CurrentUser = { id: 'admin-a', email: 'admin-a@example.test', role: 'admin', employeeId: null, organizationId: 'org_default' };
-const hr: CurrentUser = { id: 'hr-a', email: 'hr-a@example.test', role: 'hr', employeeId: null, organizationId: 'org_default' };
-const otherAdmin: CurrentUser = { id: 'admin-b', email: 'admin-b@example.test', role: 'admin', employeeId: null, organizationId: 'org_b' };
+const admin: CurrentUser = { id: 'admin-a', email: 'admin-a@example.test', role: 'admin', employeeId: null, organizationId: 'org_default', organizationStatus: 'active' };
+const hr: CurrentUser = { id: 'hr-a', email: 'hr-a@example.test', role: 'hr', employeeId: null, organizationId: 'org_default', organizationStatus: 'active' };
+const otherAdmin: CurrentUser = { id: 'admin-b', email: 'admin-b@example.test', role: 'admin', employeeId: null, organizationId: 'org_b', organizationStatus: 'active' };
 
 beforeEach(() => {
   sqlite.exec(`

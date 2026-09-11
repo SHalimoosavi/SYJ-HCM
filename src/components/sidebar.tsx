@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { CurrentUser } from '@/lib/session';
 import { isHrOrAdmin } from '@/lib/auth';
+import { isPlatformAdministrator } from '@/lib/platform';
 
 type NavLink = { href: string; label: string };
 
@@ -14,12 +15,15 @@ const baseLinks: NavLink[] = [
 const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }];
 const adminLinks: NavLink[] = [{ href: '/organization', label: 'Organization' }];
 
-export function Sidebar({ user }: { user: CurrentUser }) {
+export async function Sidebar({ user }: { user: CurrentUser }) {
+  const platformAdmin = await isPlatformAdministrator(user.id);
   const links: NavLink[] = user.role === 'admin'
     ? [...baseLinks.slice(0, 1), ...hrLinks, ...adminLinks, ...baseLinks.slice(1)]
     : isHrOrAdmin(user.role)
       ? [...baseLinks.slice(0, 1), ...hrLinks, ...baseLinks.slice(1)]
       : baseLinks;
+
+  const platformLinks: NavLink[] = platformAdmin ? [{ href: '/platform', label: 'Platform' }] : [];
 
   return (
     <aside className="hidden md:flex md:w-60 md:flex-col border-r border-surface-200 bg-white">
@@ -30,6 +34,9 @@ export function Sidebar({ user }: { user: CurrentUser }) {
         <span className="ml-2.5 font-semibold text-surface-900">SYJ-HCM</span>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
+        {platformLinks.map((link) => (
+          <Link key={link.href} href={link.href} className="flex items-center rounded-lg px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50">{link.label}</Link>
+        ))}
         {links.map((link) => (
           <Link
             key={link.href}

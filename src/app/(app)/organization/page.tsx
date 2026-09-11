@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth';
 import { getOrganizationForAdmin, getOrganizationMembersForAdmin } from '@/lib/organization-management';
-import { updateOrganizationAction } from './actions';
+import { getOrganizationConfiguration } from '@/lib/platform';
+import { updateOrganizationAction, updateOrganizationConfigurationAction } from './actions';
 
 export default async function OrganizationPage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) {
   const user = await requireRole('admin');
   const organization = await getOrganizationForAdmin(user);
   const members = await getOrganizationMembersForAdmin(user);
+  const configuration = await getOrganizationConfiguration(user);
   const params = await searchParams;
 
   if (!organization) {
@@ -42,6 +44,17 @@ export default async function OrganizationPage({ searchParams }: { searchParams:
           <div><label className="label" htmlFor="name">Organization name</label><input className="input" id="name" name="name" defaultValue={organization.name} maxLength={100} required /></div>
           <div><label className="label" htmlFor="slug">Organization slug</label><input className="input" id="slug" name="slug" defaultValue={organization.slug} maxLength={64} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required /><p className="mt-1 text-xs text-surface-500">Lowercase letters, numbers and hyphens. Must be unique.</p></div>
           <div className="flex justify-end"><button className="btn-primary" type="submit">Save organization</button></div>
+        </form>
+      </section>
+
+      <section className="card p-6">
+        <div className="border-b border-surface-200 pb-4"><h2 className="text-lg font-semibold">Organization configuration</h2><p className="text-sm text-surface-500">Tenant-owned defaults used by future HCM modules and shared presentation logic.</p></div>
+        <form action={updateOrganizationConfigurationAction} className="mt-6 grid gap-5 sm:grid-cols-2">
+          <div><label className="label" htmlFor="timezone">Timezone</label><select className="input" id="timezone" name="timezone" defaultValue={configuration?.timezone ?? 'UTC'}><option>UTC</option><option>Asia/Kolkata</option><option>Asia/Dubai</option><option>Asia/Singapore</option><option>Europe/London</option><option>Europe/Berlin</option><option>America/New_York</option><option>America/Los_Angeles</option><option>Australia/Sydney</option></select></div>
+          <div><label className="label" htmlFor="locale">Locale</label><select className="input" id="locale" name="locale" defaultValue={configuration?.locale ?? 'en-IN'}><option value="en-IN">English (India)</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option></select></div>
+          <div><label className="label" htmlFor="dateFormat">Date format</label><select className="input" id="dateFormat" name="dateFormat" defaultValue={configuration?.dateFormat ?? 'YYYY-MM-DD'}><option>YYYY-MM-DD</option><option>DD-MM-YYYY</option><option>MM-DD-YYYY</option></select></div>
+          <div><label className="label" htmlFor="weekStartDay">Week starts</label><select className="input" id="weekStartDay" name="weekStartDay" defaultValue={String(configuration?.weekStartDay ?? 1)}><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></div>
+          <div className="sm:col-span-2 flex justify-end"><button className="btn-primary" type="submit">Save configuration</button></div>
         </form>
       </section>
 

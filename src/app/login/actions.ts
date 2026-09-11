@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { db, withSqliteTransactionSync } from '@/db/client';
-import { users } from '@/db/schema';
+import { organizations, platformAdministrators, users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword } from '@/lib/password';
 import { createSessionRecordInTransaction, setSessionCookieForRecord } from '@/lib/session';
@@ -80,6 +80,13 @@ export async function loginAction(_prevState: LoginState, formData: FormData): P
       return result.allowed ? { error: genericError } : { error: 'Too many sign-in attempts. Please try again later.' };
     }
 
+    const organizationRows = await db.select({ status: organizations.status }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
+    const platformRows = await db.select({ userId: platformAdministrators.userId }).from(platformAdministrators).where(eq(platformAdministrators.userId, user.id)).limit(1);
+    if (organizationRows[0]?.status === 'suspended' && platformRows.length === 0) {
+      await recordFailedAttempt(rateLimitKey, user.organizationId, false);
+      return { error: 'Your organization is currently suspended. Please contact the platform administrator.' };
+    }
+
     clearLoginFailures(rateLimitKey, organizationId);
     const sessionRecord = withSqliteTransactionSync(() => {
       const record = createSessionRecordInTransaction(user.id, organizationId);
@@ -94,7 +101,7 @@ export async function loginAction(_prevState: LoginState, formData: FormData): P
     });
     await setSessionCookieForRecord(sessionRecord);
 
-    redirect('/dashboard');
+    redirect(organizationRows[0]?.status === 'suspended' && platformRows.length > 0 ? '/platform' : '/dashboard');
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('NEXT_REDIRECT')) {
       throw error;

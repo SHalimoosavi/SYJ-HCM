@@ -1,8 +1,8 @@
 {
   "name": "syj-hcm",
-  "version": "0.9.4-alpha",
+  "version": "0.9.5-alpha",
   "private": true,
-  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 1: Core HR",
+  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 1.2c SaaS productization foundation",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
-    "test": "node --import tsx --test --test-reporter=spec tests/*.test.ts"
+    "test": "node --import tsx --test --test-reporter=spec tests/*.test.ts",
+    "platform:grant-admin": "tsx scripts/grant-platform-admin.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

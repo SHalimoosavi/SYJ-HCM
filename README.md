@@ -1,276 +1,275 @@
 # SYJ-HCM
 
-Sayanjali Human Capital Management — Core HR foundation with production security hardening and the Phase 1.2a multi-tenant foundation.
+Sayanjali Human Capital Management — secure multi-tenant HCM foundation evolving into a SaaS-ready product platform.
 
-This repository contains real working software backed by SQLite through Drizzle ORM. There is no mocked tenant data and no placeholder tenant enforcement.
+## Current release
 
-## Current release line
+- **Current development release:** `v0.9.5-alpha`
+- **Phase:** `1.2c — Productization / SaaS Foundation`
+- **Previous release:** `v0.9.4-alpha — Phase 1.2b Organization / Tenant Management`
+- **Baseline commit:** `d4f7a944fce83864894fe37ab2534e0088b97c25`
 
-- Current development version: **0.9.3-alpha**
-- Phase 1.1 security-hardening release: **v0.9.2-alpha**
-- Phase 1.2a multi-tenant foundation: **v0.9.3-alpha** (proposed; tag after validation)
+The repository uses real SQLite-backed application state. Tenant and platform authorization are enforced on the server; browser state is never an authority for organization ownership or platform privilege.
 
-The v0.9.2-alpha tag is intentionally limited to the documentation/version correction and Phase 1.1 hardening that was already merged into `main`. The Phase 1.2a tenant model is a separate subsequent release.
+## Architecture
+
+```text
+PLATFORM
+└── platform_administrators
+      │
+      └── authenticated user
+            │
+            └── ORGANIZATION
+                  ├── admin
+                  ├── hr
+                  └── employee
+                        │
+                        ├── Employees
+                        ├── Leave
+                        └── Attendance
+```
+
+Platform administration is a separate server-side capability. An organization `admin` is **not** automatically a platform administrator.
+
+Technology remains intentionally lightweight:
+
+- Next.js 15.5.25
+- React 18.3.1
+- TypeScript
+- Drizzle ORM 0.45.2
+- SQLite via Node.js built-in `node:sqlite`
+- `drizzle-orm/sqlite-proxy`
+- Tailwind CSS
+- Node built-in test runner
+- Node.js 22.5.0+
+
+No `better-sqlite3`, `sqlite3`, Redis, external database, native SQLite addon, microservice, or Kubernetes dependency is introduced.
 
 ## Phase 1 — Core HR
 
 Implemented:
 
-- Authentication with scrypt password hashing and DB-backed HMAC-signed sessions
-- Seven-day absolute and 24-hour idle session policy
-- DB-backed failed-login throttling
-- Password rotation with previous-session revocation
-- Sign-out-other-sessions
-- Server-side role-based authorization for admin / HR / employee
-- Employee CRUD and status management
-- Employee self-service profile
-- Leave application, approval, rejection and cancellation
-- Leave overlap and balance validation
-- Transaction-safe leave and attendance mutations
-- Browser geolocation attendance with server-authoritative timestamps
-- Attendance coordinate validation and database integrity guards
-- HR/admin dashboard and employee-private dashboard
-- Immutable audit records
+- scrypt password hashing
+- HMAC-signed DB-backed sessions
+- seven-day absolute and 24-hour idle session policy
+- persistent login throttling
+- password rotation and session revocation
+- server-side RBAC for `admin`, `hr`, and `employee`
+- employee CRUD and status management
+- employee self-service profile
+- leave application, approval, rejection and cancellation
+- leave overlap and balance validation
+- transaction-safe leave and attendance mutations
+- browser geolocation attendance with server-authoritative timestamps
+- database attendance integrity guards
+- immutable tenant audit logs
 
 ## Phase 1.1 — Production security hardening
 
-The merged hardening pass added:
+Implemented:
 
-- Persistent login throttling
-- Failed-login and authorization-failure auditing
-- Absolute + idle session expiry
-- Session revocation on password change
-- Explicit authorization helpers/matrix
-- Transaction boundaries for authentication, employee, leave and attendance operations
-- Transactional migration application
-- Attendance coordinate and clock-order database guards
-- Leave state-machine guard
-- Immutable audit-log triggers
-- CSP and production security headers
-- Production HSTS
-- Private/no-store authenticated responses
-- Fail-closed production startup checks
-- CI verification for locked install, typecheck, tests, production build and production dependency audit
-
-The current repository contains **47 test cases defined in `tests/*.test.ts`**: the original Phase 1/1.1 coverage plus the new Phase 1.2a tenant-isolation and populated-schema migration tests. The repository itself does not store historical GitHub Actions logs, so a past test/build/audit result is not represented as a source-of-truth file here; validate the checkout locally and rely on the CI run attached to the pushed commit for release sign-off.
-
-The CI workflow currently runs:
-
-1. `npm ci`
-2. `npm run typecheck`
-3. `npm test`
-4. `npm run build`
-5. `npm audit --omit=dev --audit-level=high`
-
-The deprecated interactive `next lint` command is intentionally not a CI step. The production build is the non-interactive Next.js validation gate.
+- persistent failed-login throttling and audit events
+- authorization-failure auditing
+- absolute + idle session expiration
+- password-change session revocation
+- explicit authorization matrix
+- transaction boundaries around security-sensitive mutations
+- transactional migration runner
+- attendance coordinate/clock-order database guards
+- leave state-machine guard
+- immutable audit triggers
+- CSP, security headers and HSTS in production
+- private/no-store authenticated responses
+- fail-closed production startup validation
+- CI locked-install, typecheck, test, build and production dependency audit gates
 
 ## Phase 1.2a — Multi-tenant foundation
 
-This pass adds the organization/tenant model only. It does **not** add organization settings, branding, billing, licensing, notifications, policies, import/export, password reset or email verification.
+Implemented:
 
-### Tenant root
+- `organizations` tenant root
+- required `organization_id` on tenant-owned tables
+- populated-data migration/backfill
+- tenant-scoped employees, users, sessions, leave, attendance and audit records
+- authenticated server-derived organization context
+- cross-tenant negative tests
+- organization slug uniqueness
+- tenant-safe foreign keys and indexes
 
-An `organizations` table is now the tenant root:
+## Phase 1.2b — Organization / Tenant Management
 
-- `id`
-- `name`
-- `slug`
-- `status`
-- `created_at`
-- `updated_at`
+Implemented:
 
-Every existing tenant-scoped table now has a required `organization_id`:
+- organization overview and identity administration
+- server-side name/slug validation
+- organization member listing
+- member activation/deactivation
+- member role management
+- employee ↔ user association within one tenant
+- active-administrator lockout protection
+- tenant-scoped session revocation on deactivation
+- organization-aware navigation
+- organization/member audit events
+- cross-tenant read, mutation and enumeration protections
 
-- `departments`
-- `users`
-- `sessions`
-- `login_rate_limits`
-- `employees`
-- `leave_types`
-- `leave_balances`
-- `leave_requests`
-- `attendance_records`
-- `audit_logs`
+## Phase 1.2c — Productization / SaaS Foundation
 
-Existing rows are migrated into a single `org_default` organization. The migration copies populated tables into tenant-aware tables, verifies the organization backfill, preserves the existing foreign-key graph and reinstalls the Phase 1.1 integrity triggers before completing.
+Implemented in this release:
 
-### Authentication tenant context
+### Platform administration
 
-The browser cookie contains only the signed session identifier. It does **not** carry a client-trusted organization identifier.
+- separate `platform_administrators` capability table
+- server-side platform authorization
+- platform organization inventory
+- platform-level lifecycle controls
+- platform audit visibility
+- controlled server-side bootstrap command for granting platform capability
 
-After authentication, `getCurrentUser()` resolves `organizationId` from the database-backed session/user relationship. Every authenticated application query uses that organization context.
+Bootstrap an existing account from a trusted server shell only:
 
-The login email lookup is intentionally the only pre-auth identity-resolution query that is not organization-filtered: there is no authenticated tenant context yet. Once the account is found, its persisted organization becomes the tenant context for rate limiting, auditing and session creation. Unknown-login attempts use the migration's default authentication organization namespace.
+```bash
+npm run platform:grant-admin -- admin@example.com
+```
 
-### Tenant isolation
+This does not convert the user's organization role; the user remains `admin`, `hr`, or `employee` for tenant operations.
 
-Existing page queries and Server Actions have been updated to scope reads/writes by the authenticated user's `organizationId`. Cross-organization ID manipulation is covered by negative isolation tests for employees, leave requests, attendance, audit records, sessions and login-rate-limit records.
+### Organization provisioning
 
-## Database driver
+A platform administrator can atomically create:
 
-The project uses:
+1. organization
+2. organization defaults
+3. initial administrator account
+4. platform audit events
 
-- Next.js 15.5.25
-- React 18.3.1
-- Drizzle ORM 0.45.2
-- Node.js built-in `node:sqlite`
-- `drizzle-orm/sqlite-proxy`
-- Tailwind CSS
-- Node's built-in `node:test`
+Provisioning validates identity, slug uniqueness, email uniqueness and password length before entering a transaction. A deliberate failure after account creation rolls back the organization, configuration and user records together.
 
-No `better-sqlite3` or `sqlite3` dependency is used, and no Redis or other new infrastructure dependency was introduced for Phase 1.2a.
+No email invitation or verification system is claimed to exist.
 
-Node.js **22.5.0 or later** is required because the project uses `node:sqlite`.
+### Organization lifecycle
+
+Supported states:
+
+- `active`
+- `suspended`
+
+Suspension:
+
+- blocks normal authenticated tenant access
+- revokes tenant sessions
+- preserves all tenant data
+- remains reversible by a platform administrator
+- does not delete organizations or tenant records
+
+A platform administrator can still access `/platform` even when the platform administrator's own organization is suspended. The platform control intentionally lives outside the authenticated tenant application layout.
+
+### Tenant configuration
+
+Each organization now receives an `organization_settings` row with validated, typed defaults for:
+
+- timezone
+- locale
+- date format
+- week start day
+
+Configuration is organization-owned, server-scoped and audit logged. It is intentionally small so future HR modules can build their own typed policies without introducing an arbitrary JSON settings bucket.
+
+### Audit model
+
+Two immutable audit boundaries now exist:
+
+- `audit_logs` — tenant-scoped operational/security events
+- `platform_audit_logs` — platform-scoped administrative events
+
+Platform audit does not weaken or overload the tenant audit table.
+
+## Security boundary
+
+The server derives tenant context from the authenticated DB-backed session. Client-provided organization IDs are only target selectors for deliberately platform-wide operations; they are never accepted as proof of authority.
+
+Normal organization actions remain tenant-scoped. Platform actions require membership in `platform_administrators` and are independently authorized server-side.
+
+Suspended organizations cannot use the normal `(app)` route or Server Action boundary. Platform administrators retain access to platform recovery controls.
 
 ## Database migrations
 
-The checked-in migrations are:
-
-- `0000_init.sql` — Phase 1 schema
-- `0001_phase1_1_security.sql` — Phase 1.1 security constraints
-- `0002_attendance_clock_order_insert_guard.sql` — Phase 1.1 clock-order follow-up
-- `0003_multi_tenant_foundation.sql` — Phase 1.2a organization/tenant migration
-
-Use the custom migration runner:
-
-```bash
-npm run db:migrate
+```text
+0000_init.sql                              Phase 1 schema
+0001_phase1_1_security.sql                 Phase 1.1 security constraints
+0002_attendance_clock_order_insert_guard.sql Phase 1.1 follow-up guard
+0003_multi_tenant_foundation.sql           Phase 1.2a tenant foundation
+0004_phase1_2c_productization.sql          Phase 1.2c SaaS foundation
 ```
 
-`npm start` intentionally refuses to start with pending migrations.
+The new migration is additive. Historical migrations are unchanged.
 
-## Development seed
-
-```bash
-ALLOW_DEV_SEED=true npm run db:seed
-```
-
-Seed data is development-only and belongs to the default organization. Production startup rejects `ALLOW_DEV_SEED=true`.
+The migration runner applies each migration inside `BEGIN IMMEDIATE` / `COMMIT` and records it in `__migrations`.
 
 ## Setup
 
 ```bash
 npm ci
 cp .env.example .env
-# Set a unique random SESSION_SECRET (32+ characters)
+# Set a unique random SESSION_SECRET with at least 32 characters.
 npm run db:migrate
 npm run build
 npm start
 ```
 
-## Testing
+For development seed data only:
 
 ```bash
+ALLOW_DEV_SEED=true npm run db:seed
+```
+
+Production startup rejects `ALLOW_DEV_SEED=true`.
+
+## Validation
+
+The Phase 1.2c build environment could not complete `npm ci` because outbound package installation was unavailable and the uploaded repository did not contain `node_modules`. Therefore dependency-dependent commands were **not fabricated as PASS**.
+
+Completed offline validation:
+
+- fresh migration: **PASS**
+- populated v0.9.4 migration/backfill: **PASS**
+- migration schema/trigger checks: **PASS**
+- source/repository consistency review: **PASS**
+
+Required local validation remains:
+
+```bash
+npm ci
 npm test
 npm run typecheck
 npm run build
 npm audit --omit=dev --audit-level=high
+git diff --check
 ```
 
-The test suite includes:
+Also manually exercise platform provisioning, suspension/recovery and tenant configuration after migration.
 
-- password hashing/verification
-- leave date and balance rules
-- attendance constraints
-- authorization negatives
-- login rate limiting
-- session policy
-- geolocation validation
-- security/database constraints
-- concurrency invariants
-- **tenant isolation negatives**
-- **populated-schema tenant migration/backfill validation**
+## Known limitations / deliberate deferrals
 
-## Project structure
+- Email invitations, verification, password reset, MFA, SSO and OAuth are not implemented.
+- Initial administrator credentials are supplied through the platform provisioning form; the operator must transfer them through a secure channel. No email delivery is claimed.
+- Platform administrator bootstrap is intentionally a trusted server-shell operation rather than a browser workflow.
+- The current login identity remains globally unique by email because the existing authentication flow resolves identity before tenant context exists.
+- Organization deletion is intentionally not implemented.
+- Billing, subscriptions, licensing and commercial provisioning are not implemented.
+- Attendance and leave policies remain existing Phase 1 functionality; this phase establishes the configuration boundary rather than a full policy engine.
+- Advanced observability, backups/restore automation and external infrastructure remain future work.
+
+## Roadmap
 
 ```text
-src/
-  app/
-    login/                  Authentication and login Server Action
-    (app)/                  Authenticated application routes
-      dashboard/            Tenant-scoped workforce dashboard
-      employees/            Tenant-scoped employee CRUD
-      leave/                Tenant-scoped leave workflows
-      attendance/           Tenant-scoped attendance workflows
-      profile/              Tenant-scoped employee self-service
-  db/
-    schema.ts               Organization + tenant-aware Drizzle schema
-    client.ts               node:sqlite + Drizzle sqlite-proxy
-  lib/
-    auth.ts                 Authentication/authorization boundaries
-    authorization.ts        Role + organization authorization rules
-    tenant.ts               Server-derived tenant context constants/types
-    session.ts              DB-backed session lifecycle
-    audit.ts                Tenant-scoped audit writer
-    login-rate-limit.ts     Tenant-aware failed-login throttling
-    leave-rules.ts          Tenant-scoped leave rules
-  middleware.ts              UX redirect/cache controls only
-
-drizzle/
-  0000_init.sql
-  0001_phase1_1_security.sql
-  0002_attendance_clock_order_insert_guard.sql
-  0003_multi_tenant_foundation.sql
-
-scripts/
-  migrate.ts                Transactional migration runner
-  seed.ts                   Development-only seed
-  start.ts                  Production startup validation
-  verify-phase1-1.sh        Phase 1.1 local verification helper
-
-tests/
-  tenant-isolation.test.ts  Cross-tenant read/mutation negatives
-  tenant-migration.test.ts Populated legacy-schema migration test
+Phase 1     Core HR                              COMPLETE
+Phase 1.1   Production Security Hardening       COMPLETE
+Phase 1.2a  Multi-Tenant Foundation              COMPLETE
+Phase 1.2b  Organization / Tenant Management     COMPLETE
+Phase 1.2c  Productization / SaaS Foundation     CURRENT — v0.9.5-alpha
+Phase 2     Recruiting / ATS                     NEXT
+Phase 3     HR Operations Expansion
+Phase 4     Payroll + Analytics
 ```
 
-## Scope deliberately left for later
-
-Not part of Phase 1.2a:
-
-- organization settings
-- organization branding
-- subscription/billing
-- commercial licensing
-- holiday calendars
-- attendance policy configuration
-- leave policy configuration
-- employee import/export
-- notifications
-- password reset
-- email verification
-- document management
-- backups/restore automation
-- monitoring/observability platform
-- recruiting/ATS
-- onboarding
-- expenses/helpdesk/performance/OKRs
-- payroll/statutory engine
-- analytics
-
-These must be built on top of the tenant foundation rather than alongside it.
-
-## Known current limitations
-
-- The current login identity remains globally unique by email. This is deliberate for Phase 1.2a because the current login flow resolves the account before authentication and does not accept a client-trusted organization selector. A future organization-aware identity/login flow can be introduced as a separate productization step.
-- Organization creation and customer onboarding UI are not included in this pass.
-- There is no subscription, licence-key or billing system yet.
-- Leave requests spanning calendar years still follow the existing Phase 1 calendar-year balance behavior.
-- Attendance still derives "Absent Today" from active employees minus present/on-leave counts; no end-of-day absence job exists yet.
-
-## Release tags
-
-For the already-merged Phase 1.1 hardening release:
-
-```bash
-git tag -a v0.9.2-alpha -m "SYJ-HCM Phase 1.1 production hardening"
-git push origin v0.9.2-alpha
-```
-
-For the separate Phase 1.2a tenant foundation after validation:
-
-```bash
-git tag -a v0.9.3-alpha -m "SYJ-HCM Phase 1.2a multi-tenant foundation"
-git push origin v0.9.3-alpha
-```
-
-Do not tag the tenant foundation as `v0.9.2-alpha`; that release name is reserved for the already-merged Phase 1.1 hardening/documentation correction.
+Phase 2 should build Recruiting/ATS on this tenant, organization, authorization, audit, lifecycle and configuration foundation. It should not bypass these boundaries.

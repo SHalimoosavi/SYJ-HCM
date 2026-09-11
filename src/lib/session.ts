@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { db, sqlite } from '@/db/client';
-import { sessions, users } from '@/db/schema';
+import { organizations, sessions, users } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { isSessionActive, SESSION_ABSOLUTE_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from './session-policy';
 
@@ -123,6 +123,7 @@ export type CurrentUser = {
   role: 'admin' | 'hr' | 'employee';
   employeeId: string | null;
   organizationId: string;
+  organizationStatus: 'active' | 'suspended';
 };
 
 /**
@@ -150,10 +151,12 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
       email: users.email,
       role: users.role,
       isActive: users.isActive,
-      employeeId: users.employeeId
+      employeeId: users.employeeId,
+      organizationStatus: organizations.status
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
+    .innerJoin(organizations, eq(users.organizationId, organizations.id))
     .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, users.organizationId)))
     .limit(1);
 
@@ -178,6 +181,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     email: row.email,
     role: row.role,
     employeeId: row.employeeId,
-    organizationId: row.userOrganizationId
+    organizationId: row.userOrganizationId,
+    organizationStatus: row.organizationStatus
   };
 }

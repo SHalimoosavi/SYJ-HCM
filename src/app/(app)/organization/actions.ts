@@ -8,6 +8,7 @@ import {
   setMemberStatusInTransaction,
   updateOrganizationInTransaction
 } from '@/lib/organization-management';
+import { updateOrganizationConfigurationInTransaction } from '@/lib/platform';
 
 function errorRedirect(message: string): never {
   redirect(`/organization?error=${encodeURIComponent(message)}`);
@@ -60,4 +61,19 @@ export async function linkEmployeeAction(formData: FormData): Promise<void> {
     redirect(`/organization/members?error=${encodeURIComponent(error instanceof Error ? error.message : 'Employee link update failed.')}`);
   }
   redirect('/organization/members?saved=1');
+}
+
+export async function updateOrganizationConfigurationAction(formData: FormData): Promise<void> {
+  const actor = await requireRoleForAction('admin');
+  try {
+    updateOrganizationConfigurationInTransaction(actor, {
+      timezone: String(formData.get('timezone') ?? ''),
+      locale: String(formData.get('locale') ?? ''),
+      dateFormat: String(formData.get('dateFormat') ?? ''),
+      weekStartDay: Number(formData.get('weekStartDay') ?? -1)
+    });
+  } catch (error) {
+    errorRedirect(error instanceof Error ? error.message : 'Organization configuration update failed.');
+  }
+  redirect('/organization?saved=config');
 }
