@@ -24,6 +24,19 @@ export const organizations = sqliteTable(
 // Core reference tables
 // ---------------------------------------------------------------------------
 
+export const organizationSettings = sqliteTable(
+  'organization_settings',
+  {
+    organizationId: text('organization_id').primaryKey().references(() => organizations.id, { onDelete: 'restrict' }),
+    timezone: text('timezone').notNull().default('UTC'),
+    locale: text('locale').notNull().default('en-IN'),
+    dateFormat: text('date_format').notNull().default('YYYY-MM-DD'),
+    weekStartDay: integer('week_start_day').notNull().default(1),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  }
+);
+
 export const departments = sqliteTable(
   'departments',
   {
@@ -90,6 +103,31 @@ export const loginRateLimits = sqliteTable(
   (t) => ({
     organizationIdx: index('login_rate_limits_organization_idx').on(t.organizationId),
     updatedIdx: index('login_rate_limits_updated_idx').on(t.organizationId, t.updatedAt)
+  })
+);
+
+export const platformAdministrators = sqliteTable(
+  'platform_administrators',
+  {
+    userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+  }
+);
+
+export const platformAuditLogs = sqliteTable(
+  'platform_audit_logs',
+  {
+    id: text('id').primaryKey(),
+    actorUserId: text('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    action: text('action').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    metadata: text('metadata'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    entityIdx: index('platform_audit_entity_idx').on(t.entityType, t.entityId),
+    actorIdx: index('platform_audit_actor_idx').on(t.actorUserId)
   })
 );
 
@@ -248,7 +286,7 @@ export const auditLogs = sqliteTable(
 // Relations
 // ---------------------------------------------------------------------------
 
-export const organizationsRelations = relations(organizations, ({ many }) => ({
+export const organizationsRelations = relations(organizations, ({ one, many }) => ({
   departments: many(departments),
   employees: many(employees),
   users: many(users),
@@ -258,7 +296,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   leaveBalances: many(leaveBalances),
   leaveRequests: many(leaveRequests),
   attendanceRecords: many(attendanceRecords),
-  auditLogs: many(auditLogs)
+  auditLogs: many(auditLogs),
+  settings: one(organizationSettings, { fields: [organizations.id], references: [organizationSettings.organizationId] })
 }));
 
 export const employeesRelations = relations(employees, ({ one, many }) => ({
@@ -290,6 +329,9 @@ export const attendanceRelations = relations(attendanceRecords, ({ one }) => ({
 }));
 
 export type Organization = typeof organizations.$inferSelect;
+export type OrganizationSettings = typeof organizationSettings.$inferSelect;
+export type PlatformAdministrator = typeof platformAdministrators.$inferSelect;
+export type PlatformAuditLog = typeof platformAuditLogs.$inferSelect;
 export type NewOrganization = typeof organizations.$inferInsert;
 export type Employee = typeof employees.$inferSelect;
 export type NewEmployee = typeof employees.$inferInsert;

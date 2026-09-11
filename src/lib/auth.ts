@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser, type CurrentUser } from './session';
 import { recordAudit } from './audit';
+import { db } from '@/db/client';
+import { platformAdministrators } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { isRoleAllowed } from './authorization';
 import { DEFAULT_ORGANIZATION_ID } from './tenant';
 
@@ -25,6 +28,10 @@ export async function requireUser(): Promise<CurrentUser> {
       entityId: 'anonymous',
       metadata: { reason: 'not_authenticated', boundary: 'page' }
     });
+    redirect('/login');
+  }
+  if (user.organizationStatus !== 'active') {
+    await recordAudit({ organizationId: user.organizationId, actorUserId: user.id, action: 'authorization_failed', entityType: 'organization', entityId: user.organizationId, metadata: { reason: 'organization_suspended', boundary: 'page' } });
     redirect('/login');
   }
   return user;
@@ -69,6 +76,10 @@ export async function requireUserForAction(): Promise<CurrentUser> {
     });
     throw new ForbiddenError('Not authenticated.');
   }
+  if (user.organizationStatus !== 'active') {
+    await recordAudit({ organizationId: user.organizationId, actorUserId: user.id, action: 'authorization_failed', entityType: 'organization', entityId: user.organizationId, metadata: { reason: 'organization_suspended', boundary: 'server_action' } });
+    throw new ForbiddenError('Your organization is currently suspended.');
+  }
   return user;
 }
 
@@ -92,4 +103,15 @@ export async function requireRoleForAction(
 
 export function isHrOrAdmin(role: CurrentUser['role']): boolean {
   return role === 'admin' || role === 'hr';
+}
+
+export async function requirePlatformAdmin(): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) throw new ForbiddenError('Not authenticated.');
+  const rows = await db.select({ userId: platformAdministrators.userId }).from(platformAdministrators).where(eq(platformAdministrators.userId, user.id)).limit(1);
+  if (rows.length !== 1) {
+    await recordAudit({ organizationId: user.organizationId, actorUserId: user.id, action: 'authorization_failed', entityType: 'platform', entityId: user.id, metadata: { reason: 'platform_role_denied' } });
+    throw new ForbiddenError('Platform administration access is restricted.');
+  }
+  return user;
 }
