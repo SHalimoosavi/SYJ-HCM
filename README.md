@@ -4,9 +4,9 @@ Sayanjali Human Capital Management — secure multi-tenant HCM foundation evolvi
 
 ## Current release
 
-- **Current development release:** `v0.9.5-alpha`
-- **Phase:** `1.2c — Productization / SaaS Foundation`
-- **Previous release:** `v0.9.4-alpha — Phase 1.2b Organization / Tenant Management`
+- **Current development release:** `v0.10.0-alpha`
+- **Phase:** `2.1 — Recruitment / ATS Foundation`
+- **Previous release:** `v0.9.5-alpha — Phase 1.2c Productization / SaaS Foundation`
 - **Baseline commit:** `d4f7a944fce83864894fe37ab2534e0088b97c25`
 
 The repository uses real SQLite-backed application state. Tenant and platform authorization are enforced on the server; browser state is never an authority for organization ownership or platform privilege.
@@ -273,3 +273,23 @@ Phase 4     Payroll + Analytics
 ```
 
 Phase 2 should build Recruiting/ATS on this tenant, organization, authorization, audit, lifecycle and configuration foundation. It should not bypass these boundaries.
+
+
+## Phase 2.1 — Recruitment / ATS Foundation
+
+Current release: **v0.10.0-alpha**. Phase 2.1 adds tenant-scoped job requisitions, reusable candidates, applications, controlled recruitment status transitions, application history, recruitment audit events, and working recruitment management UI.
+
+### Recruitment routes
+- `/recruitment` — recruitment overview
+- `/recruitment/jobs` — job requisitions
+- `/recruitment/candidates` — candidates
+- `/recruitment/applications` — applications
+
+### Security
+Recruitment operations reuse the existing authenticated tenant context, server-side RBAC, suspended-organization enforcement and immutable tenant audit log. Cross-tenant resource references are rejected and tenant-aware database foreign keys protect key relationships.
+
+### Phase 2.1 boundaries
+Resume/file storage, configurable pipelines, interviews, offers, notifications, AI screening, billing and payroll are intentionally deferred. See `PHASE_2.1_REPORT.md`.
+
+### Next
+**Phase 2.2 — Candidate Pipeline**: configurable stages, screening/shortlisting, richer stage history, reasons and pipeline views.

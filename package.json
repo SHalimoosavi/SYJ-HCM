@@ -1,8 +1,8 @@
 {
   "name": "syj-hcm",
-  "version": "0.9.5-alpha",
+  "version": "0.10.0-alpha",
   "private": true,
-  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 1.2c SaaS productization foundation",
+  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 2.1 Recruitment / ATS foundation",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

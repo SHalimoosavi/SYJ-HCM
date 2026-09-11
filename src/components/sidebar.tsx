@@ -12,7 +12,7 @@ const baseLinks: NavLink[] = [
   { href: '/profile', label: 'My Profile' }
 ];
 
-const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }];
+const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }, { href: '/recruitment', label: 'Recruitment' }];
 const adminLinks: NavLink[] = [{ href: '/organization', label: 'Organization' }];
 
 export async function Sidebar({ user }: { user: CurrentUser }) {

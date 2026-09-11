@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, foreignKey } from 'drizzle-orm/sqlite-core';
 import { relations, sql } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,8 @@ export const departments = sqliteTable(
     createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
   },
   (t) => ({
-    organizationIdx: index('departments_organization_idx').on(t.organizationId)
+    organizationIdx: index('departments_organization_idx').on(t.organizationId),
+    organizationIdIdIdx: uniqueIndex('departments_organization_id_idx').on(t.organizationId, t.id)
   })
 );
 
@@ -70,7 +71,8 @@ export const users = sqliteTable(
   },
   (t) => ({
     emailIdx: uniqueIndex('users_email_idx').on(t.email),
-    organizationIdx: index('users_organization_idx').on(t.organizationId)
+    organizationIdx: index('users_organization_idx').on(t.organizationId),
+    organizationIdIdIdx: uniqueIndex('users_organization_id_idx').on(t.organizationId, t.id)
   })
 );
 
@@ -166,7 +168,127 @@ export const employees = sqliteTable(
     codeIdx: uniqueIndex('employees_code_idx').on(t.organizationId, t.employeeCode),
     emailIdx: uniqueIndex('employees_work_email_idx').on(t.organizationId, t.workEmail),
     deptIdx: index('employees_department_idx').on(t.organizationId, t.departmentId),
-    statusIdx: index('employees_status_idx').on(t.organizationId, t.employmentStatus)
+    statusIdx: index('employees_status_idx').on(t.organizationId, t.employmentStatus),
+    organizationIdIdIdx: uniqueIndex('employees_organization_id_idx').on(t.organizationId, t.id)
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Recruitment / ATS
+// ---------------------------------------------------------------------------
+
+export const jobRequisitions = sqliteTable(
+  'job_requisitions',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    requisitionCode: text('requisition_code').notNull(),
+    title: text('title').notNull(),
+    departmentId: text('department_id'),
+    location: text('location'),
+    employmentType: text('employment_type', { enum: ['full_time', 'part_time', 'contract', 'temporary', 'internship'] }).notNull(),
+    description: text('description').notNull(),
+    requirements: text('requirements').notNull(),
+    skills: text('skills'),
+    salaryMin: real('salary_min'),
+    salaryMax: real('salary_max'),
+    currency: text('currency').notNull().default('INR'),
+    openings: integer('openings').notNull().default(1),
+    hiringManagerEmployeeId: text('hiring_manager_employee_id'),
+    recruiterUserId: text('recruiter_user_id'),
+    status: text('status', { enum: ['draft', 'open', 'on_hold', 'closed', 'cancelled'] }).notNull().default('draft'),
+    openingDate: text('opening_date'),
+    closingDate: text('closing_date'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    codeIdx: uniqueIndex('job_requisitions_code_idx').on(t.organizationId, t.requisitionCode),
+    organizationIdIdIdx: uniqueIndex('job_requisitions_organization_id_idx').on(t.organizationId, t.id),
+    statusIdx: index('job_requisitions_status_idx').on(t.organizationId, t.status),
+    departmentIdx: index('job_requisitions_department_idx').on(t.organizationId, t.departmentId),
+    recruiterIdx: index('job_requisitions_recruiter_idx').on(t.organizationId, t.recruiterUserId),
+    hiringManagerIdx: index('job_requisitions_hiring_manager_idx').on(t.organizationId, t.hiringManagerEmployeeId),
+    createdIdx: index('job_requisitions_created_idx').on(t.organizationId, t.createdAt),
+    organizationCodeFk: foreignKey({ columns: [t.organizationId, t.departmentId], foreignColumns: [departments.organizationId, departments.id], name: 'job_requisitions_department_tenant_fk' }),
+    organizationHiringManagerFk: foreignKey({ columns: [t.organizationId, t.hiringManagerEmployeeId], foreignColumns: [employees.organizationId, employees.id], name: 'job_requisitions_hiring_manager_tenant_fk' }),
+    organizationRecruiterFk: foreignKey({ columns: [t.organizationId, t.recruiterUserId], foreignColumns: [users.organizationId, users.id], name: 'job_requisitions_recruiter_tenant_fk' }),
+    organizationCreatorFk: foreignKey({ columns: [t.organizationId, t.createdBy], foreignColumns: [users.organizationId, users.id], name: 'job_requisitions_creator_tenant_fk' })
+  })
+);
+
+export const candidates = sqliteTable(
+  'candidates',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    firstName: text('first_name').notNull(),
+    lastName: text('last_name').notNull(),
+    email: text('email').notNull(),
+    phone: text('phone'),
+    location: text('location'),
+    headline: text('headline'),
+    summary: text('summary'),
+    source: text('source'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    emailIdx: uniqueIndex('candidates_email_idx').on(t.organizationId, t.email),
+    organizationIdIdIdx: uniqueIndex('candidates_organization_id_idx').on(t.organizationId, t.id),
+    nameIdx: index('candidates_name_idx').on(t.organizationId, t.lastName, t.firstName),
+    createdIdx: index('candidates_created_idx').on(t.organizationId, t.createdAt),
+    creatorFk: foreignKey({ columns: [t.organizationId, t.createdBy], foreignColumns: [users.organizationId, users.id], name: 'candidates_creator_tenant_fk' })
+  })
+);
+
+export const applications = sqliteTable(
+  'applications',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    candidateId: text('candidate_id').notNull(),
+    requisitionId: text('requisition_id').notNull(),
+    applicationReference: text('application_reference').notNull(),
+    status: text('status', { enum: ['applied', 'screening', 'shortlisted', 'interview', 'evaluation', 'offer', 'hired', 'rejected', 'withdrawn', 'archived'] }).notNull().default('applied'),
+    appliedAt: text('applied_at').notNull().default(sql`(current_timestamp)`),
+    source: text('source'),
+    currentStage: text('current_stage').notNull().default('applied'),
+    notes: text('notes'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    referenceIdx: uniqueIndex('applications_reference_idx').on(t.organizationId, t.applicationReference),
+    organizationIdIdIdx: uniqueIndex('applications_organization_id_idx').on(t.organizationId, t.id),
+    candidateIdx: index('applications_candidate_idx').on(t.organizationId, t.candidateId),
+    requisitionIdx: index('applications_requisition_idx').on(t.organizationId, t.requisitionId),
+    statusIdx: index('applications_status_idx').on(t.organizationId, t.status),
+    createdIdx: index('applications_created_idx').on(t.organizationId, t.createdAt),
+    candidateFk: foreignKey({ columns: [t.organizationId, t.candidateId], foreignColumns: [candidates.organizationId, candidates.id], name: 'applications_candidate_tenant_fk' }),
+    requisitionFk: foreignKey({ columns: [t.organizationId, t.requisitionId], foreignColumns: [jobRequisitions.organizationId, jobRequisitions.id], name: 'applications_requisition_tenant_fk' })
+  })
+);
+
+export const applicationHistory = sqliteTable(
+  'application_history',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    applicationId: text('application_id').notNull(),
+    previousStatus: text('previous_status'),
+    newStatus: text('new_status').notNull(),
+    actorUserId: text('actor_user_id').notNull(),
+    reason: text('reason'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    applicationIdx: index('application_history_application_idx').on(t.organizationId, t.applicationId, t.createdAt),
+    actorIdx: index('application_history_actor_idx').on(t.organizationId, t.actorUserId),
+    applicationFk: foreignKey({ columns: [t.organizationId, t.applicationId], foreignColumns: [applications.organizationId, applications.id], name: 'application_history_application_tenant_fk' }),
+    actorFk: foreignKey({ columns: [t.organizationId, t.actorUserId], foreignColumns: [users.organizationId, users.id], name: 'application_history_actor_tenant_fk' })
   })
 );
 
@@ -297,6 +419,10 @@ export const organizationsRelations = relations(organizations, ({ one, many }) =
   leaveRequests: many(leaveRequests),
   attendanceRecords: many(attendanceRecords),
   auditLogs: many(auditLogs),
+  jobRequisitions: many(jobRequisitions),
+  candidates: many(candidates),
+  applications: many(applications),
+  applicationHistory: many(applicationHistory),
   settings: one(organizationSettings, { fields: [organizations.id], references: [organizationSettings.organizationId] })
 }));
 
@@ -307,13 +433,42 @@ export const employeesRelations = relations(employees, ({ one, many }) => ({
   user: many(users),
   leaveRequests: many(leaveRequests),
   leaveBalances: many(leaveBalances),
-  attendanceRecords: many(attendanceRecords)
+  attendanceRecords: many(attendanceRecords),
+  jobRequisitions: many(jobRequisitions)
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
   organization: one(organizations, { fields: [users.organizationId], references: [organizations.id] }),
   employee: one(employees, { fields: [users.employeeId], references: [employees.id] }),
   sessions: many(sessions)
+}));
+
+export const jobRequisitionsRelations = relations(jobRequisitions, ({ one, many }) => ({
+  organization: one(organizations, { fields: [jobRequisitions.organizationId], references: [organizations.id] }),
+  department: one(departments, { fields: [jobRequisitions.departmentId], references: [departments.id] }),
+  hiringManager: one(employees, { fields: [jobRequisitions.hiringManagerEmployeeId], references: [employees.id] }),
+  recruiter: one(users, { fields: [jobRequisitions.recruiterUserId], references: [users.id] }),
+  creator: one(users, { fields: [jobRequisitions.createdBy], references: [users.id] }),
+  applications: many(applications)
+}));
+
+export const candidatesRelations = relations(candidates, ({ one, many }) => ({
+  organization: one(organizations, { fields: [candidates.organizationId], references: [organizations.id] }),
+  creator: one(users, { fields: [candidates.createdBy], references: [users.id] }),
+  applications: many(applications)
+}));
+
+export const applicationsRelations = relations(applications, ({ one, many }) => ({
+  organization: one(organizations, { fields: [applications.organizationId], references: [organizations.id] }),
+  candidate: one(candidates, { fields: [applications.candidateId], references: [candidates.id] }),
+  requisition: one(jobRequisitions, { fields: [applications.requisitionId], references: [jobRequisitions.id] }),
+  history: many(applicationHistory)
+}));
+
+export const applicationHistoryRelations = relations(applicationHistory, ({ one }) => ({
+  organization: one(organizations, { fields: [applicationHistory.organizationId], references: [organizations.id] }),
+  application: one(applications, { fields: [applicationHistory.applicationId], references: [applications.id] }),
+  actor: one(users, { fields: [applicationHistory.actorUserId], references: [users.id] })
 }));
 
 export const leaveRequestsRelations = relations(leaveRequests, ({ one }) => ({
@@ -338,3 +493,7 @@ export type NewEmployee = typeof employees.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
+export type JobRequisition = typeof jobRequisitions.$inferSelect;
+export type Candidate = typeof candidates.$inferSelect;
+export type Application = typeof applications.$inferSelect;
+export type ApplicationHistory = typeof applicationHistory.$inferSelect;

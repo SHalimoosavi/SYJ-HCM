@@ -1,8 +1,8 @@
-# SYJ-HCM v0.9.5-alpha — Phase 1.2c Build Bundle
+# SYJ-HCM v0.10.0-alpha — Phase 2.1 Build Bundle
 
 This bundle is the complete repository build artifact for:
 
-**SYJ-HCM v0.9.5-alpha — Phase 1.2c Productization / SaaS Foundation**
+**SYJ-HCM v0.10.0-alpha — Phase 2.1 Recruitment / ATS Foundation**
 
 ## Source baseline
 
@@ -74,3 +74,7 @@ Recommended release tag:
 ```text
 v0.9.5-alpha
 ```
+
+## Phase 2.1
+
+This bundle adds the Recruitment / ATS foundation described in `PHASE_2.1_REPORT.md`, including jobs, candidates, applications, controlled lifecycle transitions, recruitment history, tenant-aware RBAC, audit integration, and database integrity protections.
