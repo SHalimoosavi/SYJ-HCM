@@ -12,11 +12,14 @@ const baseLinks: NavLink[] = [
 ];
 
 const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }];
+const adminLinks: NavLink[] = [{ href: '/organization', label: 'Organization' }];
 
 export function Sidebar({ user }: { user: CurrentUser }) {
-  const links: NavLink[] = isHrOrAdmin(user.role)
-    ? [...baseLinks.slice(0, 1), ...hrLinks, ...baseLinks.slice(1)]
-    : baseLinks;
+  const links: NavLink[] = user.role === 'admin'
+    ? [...baseLinks.slice(0, 1), ...hrLinks, ...adminLinks, ...baseLinks.slice(1)]
+    : isHrOrAdmin(user.role)
+      ? [...baseLinks.slice(0, 1), ...hrLinks, ...baseLinks.slice(1)]
+      : baseLinks;
 
   return (
     <aside className="hidden md:flex md:w-60 md:flex-col border-r border-surface-200 bg-white">

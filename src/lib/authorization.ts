@@ -8,6 +8,10 @@ export function canAccessOrganization(actorOrganizationId: string, targetOrganiz
   return Boolean(actorOrganizationId) && actorOrganizationId === targetOrganizationId;
 }
 
+export function canManageOrganization(role: CurrentUser['role']): boolean {
+  return role === 'admin';
+}
+
 export function canManageEmployees(role: CurrentUser['role']): boolean {
   return isRoleAllowed(role, ['admin', 'hr']);
 }
@@ -42,21 +46,21 @@ export function canAccessOwnEmployeeRecord(
 
 export const authorizationMatrix = {
   admin: {
-    organization: 'same_organization',
+    organization: ['read', 'update', 'manage_members'],
     employees: ['create', 'read', 'update', 'activate', 'deactivate'],
     leave: ['apply_own', 'read_own', 'cancel_own', 'approve', 'reject'],
     attendance: ['clock_own', 'read_own', 'read_org_summary'],
     profile: ['read_own', 'change_password', 'revoke_other_sessions']
   },
   hr: {
-    organization: 'same_organization',
+    organization: ['read_own_context'],
     employees: ['create', 'read', 'update', 'activate', 'deactivate'],
     leave: ['apply_own', 'read_own', 'cancel_own', 'approve', 'reject'],
     attendance: ['clock_own', 'read_own', 'read_org_summary'],
     profile: ['read_own', 'change_password', 'revoke_other_sessions']
   },
   employee: {
-    organization: 'same_organization',
+    organization: ['read_own_context'],
     employees: [],
     leave: ['apply_own', 'read_own', 'cancel_own'],
     attendance: ['clock_own', 'read_own'],

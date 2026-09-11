@@ -1,15 +1,27 @@
-# Phase 1.1 Bundle Notice
+# Phase 1.2b Release Bundle Notice
 
-This archive contains the complete Phase 1 application source tree used for the hardening pass.
+This archive is the complete SYJ-HCM Phase 1.2b repository for version `0.9.4-alpha`.
 
-The authoritative repository baseline is GitHub `main` at:
+Baseline:
+- Repository: `SHalimoosavi/SYJ-HCM`
+- Baseline `main`: `d6aee8db8a159c1be88f20e360fd27754894735f`
+- Phase: `1.2b Organization / Tenant Management`
 
-`030168a6b5c2952933e371ad31e6878fb2391921`
+The archive is intended for local review, validation, handoff, and release preparation.
 
-The GitHub integration available during this build is read-only and the build container has no outbound network access. Therefore the repository's existing `package-lock.json` was not re-downloaded into this archive. **Do not delete the lockfile in your existing `~/syj-hcm` clone.**
+Excluded from the archive:
+- `.git/`
+- `node_modules/`
+- `.next/`
+- `.env` and environment secrets
+- local SQLite databases and other local runtime artifacts
 
-Recommended use in Termux: extract this archive over a clean clone/working copy of `main` while preserving its `.git/` directory and `package-lock.json`, then run `scripts/verify-phase1-1.sh`.
+Validation completed on the working repository:
+- `npm ci` — PASS
+- `npm test` — PASS (56/56)
+- `npm run typecheck` — PASS
+- `npm run build` — PASS
+- `npm audit --audit-level=high` — PASS (0 high/critical)
+- `git diff --check` — PASS
 
-If this archive is used as a standalone source directory instead, run `npm install` once to generate a lockfile before using `npm ci`; the dependency versions in `package.json` remain the Phase 1.0/1.1 validated versions.
-
-No Phase 2 Recruiting/ATS/Onboarding code is included.
+This bundle does not push, merge, or tag GitHub.

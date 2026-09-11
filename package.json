@@ -1,6 +1,6 @@
 {
   "name": "syj-hcm",
-  "version": "0.9.3-alpha",
+  "version": "0.9.4-alpha",
   "private": true,
   "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 1: Core HR",
   "scripts": {
