@@ -552,3 +552,47 @@ export type InterviewFeedback = typeof interviewFeedback.$inferSelect;
 export type InterviewDecision = typeof interviewDecisions.$inferSelect;
 export type CandidateNote = typeof candidateNotes.$inferSelect;
 export type CandidateActivity = typeof candidateActivities.$inferSelect;
+
+export const candidateDocuments = sqliteTable(
+  'candidate_documents',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    candidateId: text('candidate_id').notNull(),
+    applicationId: text('application_id'),
+    documentType: text('document_type', { enum: ['resume','cover_letter','certificate','portfolio','other'] }).notNull(),
+    originalFilename: text('original_filename').notNull(),
+    sanitizedFilename: text('sanitized_filename').notNull(),
+    declaredMimeType: text('declared_mime_type'),
+    detectedMimeType: text('detected_mime_type').notNull(),
+    fileSize: integer('file_size').notNull(),
+    storageProvider: text('storage_provider', { enum: ['local'] }).notNull(),
+    storageKey: text('storage_key').notNull(),
+    checksumSha256: text('checksum_sha256').notNull(),
+    lifecycleStatus: text('lifecycle_status', { enum: ['pending','available','archived','failed'] }).notNull().default('pending'),
+    scanStatus: text('scan_status', { enum: ['pending_scan','clean','infected','scan_failed','scanner_unavailable','rejected'] }).notNull().default('pending_scan'),
+    uploadedBy: text('uploaded_by').notNull(),
+    archivedAt: text('archived_at'),
+    deletedAt: text('deleted_at'),
+    retentionUntil: text('retention_until'),
+    legalHold: integer('legal_hold', { mode: 'boolean' }).notNull().default(false),
+    supersedesDocumentId: text('supersedes_document_id'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    organizationIdx: index('candidate_documents_organization_idx').on(t.organizationId),
+    candidateIdx: index('candidate_documents_candidate_idx').on(t.organizationId,t.candidateId,t.createdAt),
+    applicationIdx: index('candidate_documents_application_idx').on(t.organizationId,t.applicationId,t.createdAt),
+    typeIdx: index('candidate_documents_type_idx').on(t.organizationId,t.documentType,t.createdAt),
+    statusIdx: index('candidate_documents_status_idx').on(t.organizationId,t.lifecycleStatus,t.scanStatus),
+    createdIdx: index('candidate_documents_created_idx').on(t.organizationId,t.createdAt),
+    checksumIdx: index('candidate_documents_checksum_idx').on(t.organizationId,t.checksumSha256),
+    storageUnique: uniqueIndex('candidate_documents_storage_key_idx').on(t.storageKey),
+    organizationIdIdIdx: uniqueIndex('candidate_documents_organization_id_idx').on(t.organizationId,t.id),
+    candidateFk: foreignKey({ columns:[t.organizationId,t.candidateId], foreignColumns:[candidates.organizationId,candidates.id], name:'candidate_documents_candidate_tenant_fk' }),
+    applicationFk: foreignKey({ columns:[t.organizationId,t.applicationId,t.candidateId], foreignColumns:[applications.organizationId,applications.id,applications.candidateId], name:'candidate_documents_application_candidate_tenant_fk' }),
+    uploaderFk: foreignKey({ columns:[t.organizationId,t.uploadedBy], foreignColumns:[users.organizationId,users.id], name:'candidate_documents_uploader_tenant_fk' }),
+    supersedesFk: foreignKey({ columns:[t.organizationId,t.supersedesDocumentId], foreignColumns:[t.organizationId,t.id], name:'candidate_documents_supersedes_tenant_fk' })
+  })
+);

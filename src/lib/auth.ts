@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser, type CurrentUser } from './session';
+export { getCurrentUser } from './session';
 import { recordAudit } from './audit';
 import { db } from '@/db/client';
 import { platformAdministrators } from '@/db/schema';

@@ -2,8 +2,8 @@
 
 **SAYANJALI NEXUS — Human Capital Management + Applicant Tracking System**
 
-Current development release: **v0.11.0-alpha**
-Current phase: **Phase 2.2 — Recruitment Workflow & Interview Management**
+Current development release: **v0.12.0-alpha**
+Current phase: **Phase 2.3 — Candidate Documents & Resume Management**
 
 SYJ-HCM is a multi-tenant HCM/ATS application built around a deliberately lightweight production architecture: Next.js, TypeScript, Server Actions, Drizzle ORM, SQLite, and Node.js built-in `node:sqlite`.
 
@@ -34,7 +34,8 @@ Authenticated organization context
               ├─ Feedback / corrections
               ├─ Decisions
               ├─ Notes
-              └─ Candidate activity timeline
+              ├─ Candidate activity timeline
+              └─ Candidate documents / resume management
         │
         ▼
 Drizzle ORM / sqlite-proxy
@@ -96,12 +97,22 @@ openssl rand -hex 32
 
 Must be `false` for normal operation and production. The development-only seed command refuses to run unless explicitly set to `true`.
 
+`DOCUMENT_STORAGE_PATH`
+
+Private filesystem root for candidate documents. The default is `./data/storage`. It must not point inside a public/static asset directory.
+
+`DOCUMENT_SCANNER_MODE`
+
+Scanner integration mode. The bundled implementation uses `unavailable` and never claims malware-free status without a real scanner.
+
 Example safe `.env`:
 
 ```dotenv
 DATABASE_PATH=./data/syj-hcm.db
 SESSION_SECRET=replace-with-a-long-random-value-generated-for-this-environment
 ALLOW_DEV_SEED=false
+DOCUMENT_STORAGE_PATH=./data/storage
+DOCUMENT_SCANNER_MODE=unavailable
 ```
 
 ## 5. Database setup
@@ -126,6 +137,7 @@ Current migration sequence:
 0004_phase1_2c_productization.sql
 0005_phase2_1_recruitment_foundation.sql
 0006_phase2_2_recruitment_workflow_interviews.sql
+0007_phase2_3_candidate_documents.sql
 ```
 
 Historical migrations are never rewritten.
@@ -529,16 +541,26 @@ The application enables WAL mode and a 5-second busy timeout. Avoid opening the 
 - SQLite runtime data is excluded from Git.
 - No native SQLite dependency is used.
 
-## 26. Current limitations / deliberate deferrals
+## 26. Phase 2.3 document security and operations
 
-Phase 2.2 intentionally does **not** implement:
+Candidate document binaries are never stored in SQLite or public static directories. Uploads are validated server-side, tenant-bound, checksum recorded, and passed through an explicit malware-scanner abstraction. The bundled development scanner reports `scanner_unavailable`; it does not claim files are virus-free.
+
+The initial production-safe limit is 12 MiB per document. Allowed content is PDF, DOCX, legacy DOC, TXT, PNG, JPEG, WebP and GIF. SVG/HTML/active-content formats and arbitrary ZIP/executable signatures are rejected.
+
+Documents are HR/admin-only in this phase. Interview assignment does not automatically grant document access. Deletion is represented by archive/restore, while physical cleanup is deliberately separate. See `DOCUMENT_STORAGE.md` for operational guidance.
+
+## 27. Current limitations / deliberate deferrals
+
+Phase 2.3 intentionally does **not** implement:
 
 - email/SMS/WhatsApp notifications
 - calendar-provider integration
 - public job publishing
 - careers portal
 - candidate self-service
-- resume/CV or document storage
+- cloud object-storage provider implementation
+- autonomous malware scanning engine
+- automated retention deletion engine
 - offer management
 - advanced analytics infrastructure
 - AI candidate scoring or automated hiring decisions
@@ -550,27 +572,27 @@ Interview scheduling is stored and validated in SYJ-HCM itself; external calenda
 
 The stage configuration foundation uses stable ATS lifecycle status keys with configurable labels/order/active state rather than a generic workflow execution engine.
 
-## 27. Phase roadmap
+## 28. Phase roadmap
 
 ```text
 Phase 1       Core HR                                  COMPLETE
 Phase 1.1     Production Security Hardening             COMPLETE
-Phase 1.2a    Multi-Tenant Foundation                   COMPLETE
+Phase 1.2     Multi-Tenant Foundation                   COMPLETE
 Phase 1.2b    Organization / Tenant Management          COMPLETE
 Phase 1.2c    SaaS Productization Foundation            COMPLETE
 Phase 2.1     Recruitment / ATS Foundation              COMPLETE
-Phase 2.2     Recruitment Workflow & Interviews         CURRENT
-Phase 2.3     Candidate Documents & Resume Management   NEXT
+Phase 2.2     Recruitment Workflow & Interviews         COMPLETE
+Phase 2.3     Candidate Documents & Resume Management   CURRENT
 Phase 2.4     Job Publishing + Careers Portal
 Phase 2.5     Offer Management
 Phase 2.6     Recruitment Analytics
 Phase 3       HCM Operations / Onboarding
 ```
 
-## 28. Phase 2.3 recommendation
+## 29. Phase 2.3 delivery note
 
-The next phase should add secure candidate document management without putting arbitrary files into SQLite. The preferred direction is a storage abstraction with metadata in SQLite, secure upload validation, size/type controls, malware-scanning integration points, signed access, tenant isolation, and document audit events.
+Phase 2.3 delivers the secure document-management foundation without putting arbitrary files into SQLite. It uses private local storage behind a storage abstraction, server-side upload validation, malware-scanning integration points, tenant isolation, authenticated attachment downloads, archive/restore semantics, checksums, and document audit events. S3-compatible object storage and a real AV engine remain explicit deployment extensions rather than hidden assumptions.
 
-## 29. License / project status
+## 30. License / project status
 
 This repository is the SYJ-HCM development codebase for SAYANJALI NEXUS. The current version is an alpha development release and should undergo environment-specific security, backup, operational, and acceptance testing before production deployment.
