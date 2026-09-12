@@ -9,6 +9,7 @@ import {
   updateOrganizationInTransaction
 } from '@/lib/organization-management';
 import { updateOrganizationConfigurationInTransaction } from '@/lib/platform';
+import { enablePublicCareersAction } from '@/app/(app)/recruitment/publishing-actions';
 
 function errorRedirect(message: string): never {
   redirect(`/organization?error=${encodeURIComponent(message)}`);
@@ -61,6 +62,12 @@ export async function linkEmployeeAction(formData: FormData): Promise<void> {
     redirect(`/organization/members?error=${encodeURIComponent(error instanceof Error ? error.message : 'Employee link update failed.')}`);
   }
   redirect('/organization/members?saved=1');
+}
+
+export async function updatePublicCareersAction(formData: FormData): Promise<void> {
+  const result = await enablePublicCareersAction(String(formData.get('publicCareersEnabled') ?? '') === 'true');
+  if (result.error) errorRedirect(result.error);
+  redirect('/organization?saved=careers');
 }
 
 export async function updateOrganizationConfigurationAction(formData: FormData): Promise<void> {

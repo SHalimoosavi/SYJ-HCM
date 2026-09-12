@@ -5,12 +5,12 @@ import type { NextRequest } from 'next/server';
 // It is intentionally only a fast UX redirect. Real authentication and
 // authorization are enforced by requireUser()/requireRole() and Server Actions.
 const COOKIE_NAME = 'syj_session';
-const PUBLIC_PATHS = ['/login'];
+const PUBLIC_PATHS = ['/login', '/careers'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p)) || pathname.startsWith('/_next')) {
+  if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) || pathname.startsWith('/_next')) {
     const response = NextResponse.next();
     response.headers.set('Cache-Control', 'private, no-store');
     return response;

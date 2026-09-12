@@ -1,8 +1,8 @@
 {
   "name": "syj-hcm",
-  "version": "0.12.0-alpha",
+  "version": "0.13.0-alpha",
   "private": true,
-  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 2.3 candidate documents and resume management",
+  "description": "SYJ-HCM - Phase 2.4 job publishing and careers portal",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

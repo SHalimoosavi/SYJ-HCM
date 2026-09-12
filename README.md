@@ -2,8 +2,8 @@
 
 **SAYANJALI NEXUS — Human Capital Management + Applicant Tracking System**
 
-Current development release: **v0.12.0-alpha**
-Current phase: **Phase 2.3 — Candidate Documents & Resume Management**
+Current development release: **v0.13.0-alpha**
+Current phase: **Phase 2.4 — Job Publishing & Careers**
 
 SYJ-HCM is a multi-tenant HCM/ATS application built around a deliberately lightweight production architecture: Next.js, TypeScript, Server Actions, Drizzle ORM, SQLite, and Node.js built-in `node:sqlite`.
 
@@ -138,6 +138,7 @@ Current migration sequence:
 0005_phase2_1_recruitment_foundation.sql
 0006_phase2_2_recruitment_workflow_interviews.sql
 0007_phase2_3_candidate_documents.sql
+0008_phase2_4_job_publishing.sql
 ```
 
 Historical migrations are never rewritten.
@@ -582,8 +583,8 @@ Phase 1.2b    Organization / Tenant Management          COMPLETE
 Phase 1.2c    SaaS Productization Foundation            COMPLETE
 Phase 2.1     Recruitment / ATS Foundation              COMPLETE
 Phase 2.2     Recruitment Workflow & Interviews         COMPLETE
-Phase 2.3     Candidate Documents & Resume Management   CURRENT
-Phase 2.4     Job Publishing + Careers Portal
+Phase 2.3     Candidate Documents & Resume Management   COMPLETE
+Phase 2.4     Job Publishing + Careers Portal            CURRENT
 Phase 2.5     Offer Management
 Phase 2.6     Recruitment Analytics
 Phase 3       HCM Operations / Onboarding
@@ -596,3 +597,14 @@ Phase 2.3 delivers the secure document-management foundation without putting arb
 ## 30. License / project status
 
 This repository is the SYJ-HCM development codebase for SAYANJALI NEXUS. The current version is an alpha development release and should undergo environment-specific security, backup, operational, and acceptance testing before production deployment.
+
+
+## 31. Phase 2.4 — Job Publishing & Careers
+
+Phase 2.4 adds a dedicated `job_publications` boundary between internal ATS requisitions and the public careers experience. Public routes expose only an allowlisted DTO, resolve jobs by globally unique public slug, require an active organization with `public_careers_enabled`, and re-check requisition/application eligibility at submission time.
+
+Public routes: `/careers`, `/careers/[slug]`, `/careers/[slug]/apply`. Public application intake is `POST /api/careers/[slug]/applications`. Internal HR/Admin publication management is `/recruitment/jobs/[id]/publication`.
+
+Public applications reuse the existing candidate/application lifecycle and Phase 2.3 private document storage. Resume files remain private; the existing malware scanner abstraction is preserved, so `scanner_unavailable` is not treated as clean. The current abuse-control implementation uses SQLite-backed, HMAC-keyed IP/email rate-limit records and a server-validated honeypot/minimum-submission-time check. This is suitable for the current single-instance architecture; distributed rate limiting should be introduced before horizontal multi-instance deployment.
+
+Public application history/activity is attributed to the requisition creator because the existing ATS history/activity schema requires a tenant-local user actor. Audit records remain internal and contain no applicant PII.

@@ -32,6 +32,7 @@ export const organizationSettings = sqliteTable(
     locale: text('locale').notNull().default('en-IN'),
     dateFormat: text('date_format').notNull().default('YYYY-MM-DD'),
     weekStartDay: integer('week_start_day').notNull().default(1),
+    publicCareersEnabled: integer('public_careers_enabled', { mode: 'boolean' }).notNull().default(false),
     createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
     updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
   }
@@ -257,6 +258,7 @@ export const applications = sqliteTable(
     source: text('source'),
     currentStage: text('current_stage').notNull().default('applied'),
     notes: text('notes'),
+    publicCoverLetter: text('public_cover_letter'),
     createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
     updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
   },
@@ -470,6 +472,7 @@ export const organizationsRelations = relations(organizations, ({ one, many }) =
   candidates: many(candidates),
   applications: many(applications),
   applicationHistory: many(applicationHistory),
+  publicJobPublications: many(jobPublications),
   settings: one(organizationSettings, { fields: [organizations.id], references: [organizationSettings.organizationId] })
 }));
 
@@ -496,7 +499,8 @@ export const jobRequisitionsRelations = relations(jobRequisitions, ({ one, many 
   hiringManager: one(employees, { fields: [jobRequisitions.hiringManagerEmployeeId], references: [employees.id] }),
   recruiter: one(users, { fields: [jobRequisitions.recruiterUserId], references: [users.id] }),
   creator: one(users, { fields: [jobRequisitions.createdBy], references: [users.id] }),
-  applications: many(applications)
+  applications: many(applications),
+  publicPublication: one(jobPublications, { fields: [jobRequisitions.organizationId, jobRequisitions.id], references: [jobPublications.organizationId, jobPublications.jobRequisitionId] })
 }));
 
 export const candidatesRelations = relations(candidates, ({ one, many }) => ({
@@ -552,6 +556,66 @@ export type InterviewFeedback = typeof interviewFeedback.$inferSelect;
 export type InterviewDecision = typeof interviewDecisions.$inferSelect;
 export type CandidateNote = typeof candidateNotes.$inferSelect;
 export type CandidateActivity = typeof candidateActivities.$inferSelect;
+export type JobPublication = typeof jobPublications.$inferSelect;
+export type PublicApplicationRateLimit = typeof publicApplicationRateLimits.$inferSelect;
+
+
+// ---------------------------------------------------------------------------
+// Phase 2.4: controlled public job publishing
+// ---------------------------------------------------------------------------
+
+export const jobPublications = sqliteTable(
+  'job_publications',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    jobRequisitionId: text('job_requisition_id').notNull(),
+    publicSlug: text('public_slug').notNull(),
+    publicTitle: text('public_title').notNull(),
+    publicDescription: text('public_description').notNull(),
+    publicLocation: text('public_location'),
+    employmentType: text('employment_type').notNull(),
+    workplaceType: text('workplace_type').notNull().default('on_site'),
+    publicDepartmentName: text('public_department_name'),
+    publishedAt: text('published_at'),
+    closesAt: text('closes_at'),
+    status: text('status', { enum: ['draft', 'published', 'closed', 'archived'] }).notNull().default('draft'),
+    applicationEnabled: integer('application_enabled', { mode: 'boolean' }).notNull().default(true),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    publicSlugIdx: uniqueIndex('job_publications_public_slug_idx').on(t.publicSlug),
+    organizationIdx: index('job_publications_organization_idx').on(t.organizationId),
+    statusIdx: index('job_publications_status_idx').on(t.organizationId, t.status),
+    publishedAtIdx: index('job_publications_published_at_idx').on(t.organizationId, t.publishedAt),
+    closesAtIdx: index('job_publications_closes_at_idx').on(t.organizationId, t.closesAt),
+    applicationEnabledIdx: index('job_publications_application_enabled_idx').on(t.organizationId, t.applicationEnabled),
+    jobIdx: uniqueIndex('job_publications_job_idx').on(t.organizationId, t.jobRequisitionId),
+    organizationIdIdIdx: uniqueIndex('job_publications_organization_id_idx').on(t.organizationId, t.id),
+    creatorFk: foreignKey({ columns: [t.organizationId, t.createdBy], foreignColumns: [users.organizationId, users.id], name: 'job_publications_creator_tenant_fk' }),
+    jobFk: foreignKey({ columns: [t.organizationId, t.jobRequisitionId], foreignColumns: [jobRequisitions.organizationId, jobRequisitions.id], name: 'job_publications_job_tenant_fk' })
+  })
+);
+
+export const publicApplicationRateLimits = sqliteTable(
+  'public_application_rate_limits',
+  {
+    key: text('key').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    publicationId: text('publication_id').notNull(),
+    requestCount: integer('request_count').notNull().default(0),
+    windowStartedAt: text('window_started_at').notNull(),
+    lastSubmittedAt: text('last_submitted_at'),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    organizationIdx: index('public_application_rate_limits_organization_idx').on(t.organizationId, t.updatedAt),
+    publicationIdx: index('public_application_rate_limits_publication_idx').on(t.organizationId, t.publicationId, t.updatedAt),
+    publicationFk: foreignKey({ columns: [t.organizationId, t.publicationId], foreignColumns: [jobPublications.organizationId, jobPublications.id], name: 'public_application_rate_limits_publication_tenant_fk' })
+  })
+);
 
 export const candidateDocuments = sqliteTable(
   'candidate_documents',

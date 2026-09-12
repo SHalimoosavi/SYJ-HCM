@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth';
 import { getOrganizationForAdmin, getOrganizationMembersForAdmin } from '@/lib/organization-management';
 import { getOrganizationConfiguration } from '@/lib/platform';
-import { updateOrganizationAction, updateOrganizationConfigurationAction } from './actions';
+import { updateOrganizationAction, updateOrganizationConfigurationAction, updatePublicCareersAction } from './actions';
 
 export default async function OrganizationPage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) {
   const user = await requireRole('admin');
@@ -56,6 +56,7 @@ export default async function OrganizationPage({ searchParams }: { searchParams:
           <div><label className="label" htmlFor="weekStartDay">Week starts</label><select className="input" id="weekStartDay" name="weekStartDay" defaultValue={String(configuration?.weekStartDay ?? 1)}><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></div>
           <div className="sm:col-span-2 flex justify-end"><button className="btn-primary" type="submit">Save configuration</button></div>
         </form>
+        <div className="mt-6 border-t border-surface-200 pt-6"><h3 className="font-semibold">Public careers</h3><p className="mt-1 text-sm text-surface-500">Allow published jobs from this tenant to appear on the public careers portal. Suspended organizations are always hidden.</p><form action={updatePublicCareersAction} className="mt-4 flex items-center justify-between gap-4"><label className="flex items-center gap-3 text-sm"><input type="checkbox" name="publicCareersEnabled" value="true" defaultChecked={configuration?.publicCareersEnabled ?? false}/> Enable public careers</label><button className="btn-secondary" type="submit">Save careers setting</button></form></div>
       </section>
 
       <section className="card p-6">
