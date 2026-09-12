@@ -13,6 +13,7 @@ const baseLinks: NavLink[] = [
 ];
 
 const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }, { href: '/recruitment', label: 'Recruitment' }];
+const employeeLinks: NavLink[] = [{ href: '/recruitment/interviews', label: 'My Interviews' }];
 const adminLinks: NavLink[] = [{ href: '/organization', label: 'Organization' }];
 
 export async function Sidebar({ user }: { user: CurrentUser }) {
@@ -21,7 +22,7 @@ export async function Sidebar({ user }: { user: CurrentUser }) {
     ? [...baseLinks.slice(0, 1), ...hrLinks, ...adminLinks, ...baseLinks.slice(1)]
     : isHrOrAdmin(user.role)
       ? [...baseLinks.slice(0, 1), ...hrLinks, ...baseLinks.slice(1)]
-      : baseLinks;
+      : [...baseLinks, ...employeeLinks];
 
   const platformLinks: NavLink[] = platformAdmin ? [{ href: '/platform', label: 'Platform' }] : [];
 

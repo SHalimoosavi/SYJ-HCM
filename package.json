@@ -1,8 +1,8 @@
 {
   "name": "syj-hcm",
-  "version": "0.10.0-alpha",
+  "version": "0.11.0-alpha",
   "private": true,
-  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 2.1 Recruitment / ATS foundation",
+  "description": "SYJ-HCM (Sayanjali Human Capital Management) - Phase 2.2 Recruitment workflow and interview management",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

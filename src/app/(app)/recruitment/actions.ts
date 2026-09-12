@@ -7,6 +7,7 @@ import { requireRoleForAction } from '@/lib/auth';
 import { recordAuditSync } from '@/lib/audit';
 import { canTransitionApplicationStatus, canTransitionJobStatus, type ApplicationStatus, type JobStatus } from '@/lib/recruitment';
 import { nanoid } from 'nanoid';
+import { recordCandidateActivitySync, changeApplicationWorkflowInTransaction } from '@/lib/recruitment-workflow';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -125,7 +126,7 @@ export async function createCandidateAction(_prev: FormState, fd: FormData): Pro
   const duplicate = await db.select({ id: candidates.id }).from(candidates).where(and(eq(candidates.organizationId, actor.organizationId), eq(candidates.email, email))).limit(1);
   if (duplicate[0]) return { error: 'A candidate with this email already exists in your organization.' };
   const id = nanoid();
-  try { withSqliteTransactionSync(() => { sqlite.prepare(`INSERT INTO candidates (id, organization_id, first_name, last_name, email, phone, location, headline, summary, source, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, actor.organizationId, firstName, lastName, email, phone, location, headline, summary, source, actor.id); recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'candidate_created', entityType: 'candidate', entityId: id }); }); revalidatePath('/recruitment/candidates'); revalidatePath('/recruitment'); } catch (err) { return { error: errorMessage(err, 'Unable to create candidate.') }; }
+  try { withSqliteTransactionSync(() => { sqlite.prepare(`INSERT INTO candidates (id, organization_id, first_name, last_name, email, phone, location, headline, summary, source, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, actor.organizationId, firstName, lastName, email, phone, location, headline, summary, source, actor.id); recordCandidateActivitySync({organizationId:actor.organizationId,candidateId:id,activityType:'candidate_created',actorUserId:actor.id,summary:'Candidate created'}); recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'candidate_created', entityType: 'candidate', entityId: id }); }); revalidatePath('/recruitment/candidates'); revalidatePath('/recruitment'); } catch (err) { return { error: errorMessage(err, 'Unable to create candidate.') }; }
   redirect(`/recruitment/candidates/${id}`);
 }
 
@@ -135,7 +136,7 @@ export async function updateCandidateAction(candidateId: string, _prev: FormStat
   const firstName = textValue(fd, 'firstName'); const lastName = textValue(fd, 'lastName'); const email = textValue(fd, 'email').toLowerCase(); const phone = optional(fd, 'phone'); const location = optional(fd, 'location'); const headline = optional(fd, 'headline'); const summary = optional(fd, 'summary'); const source = optional(fd, 'source');
   if (!firstName || !lastName || !emailRx.test(email) || email.length > 254) return { error: 'First name, last name, and a valid email address are required.' };
   const duplicate = await db.select({ id: candidates.id }).from(candidates).where(and(eq(candidates.organizationId, actor.organizationId), eq(candidates.email, email))).limit(1); if (duplicate[0] && duplicate[0].id !== candidateId) return { error: 'Another candidate with this email already exists.' };
-  try { withSqliteTransactionSync(() => { sqlite.prepare(`UPDATE candidates SET first_name=?, last_name=?, email=?, phone=?, location=?, headline=?, summary=?, source=?, updated_at=? WHERE organization_id=? AND id=?`).run(firstName,lastName,email,phone,location,headline,summary,source,new Date().toISOString(),actor.organizationId,candidateId); recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'candidate_updated', entityType: 'candidate', entityId: candidateId }); }); revalidatePath(`/recruitment/candidates/${candidateId}`); revalidatePath('/recruitment/candidates'); return { error: null }; } catch(err) { return { error: errorMessage(err,'Unable to update candidate.') }; }
+  try { withSqliteTransactionSync(() => { sqlite.prepare(`UPDATE candidates SET first_name=?, last_name=?, email=?, phone=?, location=?, headline=?, summary=?, source=?, updated_at=? WHERE organization_id=? AND id=?`).run(firstName,lastName,email,phone,location,headline,summary,source,new Date().toISOString(),actor.organizationId,candidateId); recordCandidateActivitySync({organizationId:actor.organizationId,candidateId,activityType:'candidate_updated',actorUserId:actor.id,summary:'Candidate profile updated'}); recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'candidate_updated', entityType: 'candidate', entityId: candidateId }); }); revalidatePath(`/recruitment/candidates/${candidateId}`); revalidatePath('/recruitment/candidates'); return { error: null }; } catch(err) { return { error: errorMessage(err,'Unable to update candidate.') }; }
 }
 
 export async function createApplicationAction(_prev: FormState, fd: FormData): Promise<FormState> {
@@ -146,23 +147,14 @@ export async function createApplicationAction(_prev: FormState, fd: FormData): P
   const job = await db.select({ id: jobRequisitions.id, status: jobRequisitions.status }).from(jobRequisitions).where(and(eq(jobRequisitions.id,requisitionId),eq(jobRequisitions.organizationId,actor.organizationId))).limit(1); if (!job[0]) return { error: 'Job requisition not found in your organization.' }; if (job[0].status !== 'open') return { error: 'Applications can only be created for open jobs.' };
   const existing = await db.select({ id: applications.id, status: applications.status }).from(applications).where(and(eq(applications.organizationId,actor.organizationId),eq(applications.candidateId,candidateId),eq(applications.requisitionId,requisitionId))).limit(1); if (existing[0] && !['rejected','withdrawn','archived'].includes(existing[0].status)) return { error: 'This candidate already has an active application for this job.' };
   const id=nanoid(); const reference=`APP-${new Date().getUTCFullYear()}-${nanoid(8).toUpperCase()}`;
-  try { withSqliteTransactionSync(() => { sqlite.prepare(`INSERT INTO applications (id, organization_id, candidate_id, requisition_id, application_reference, status, source, current_stage, notes) VALUES (?, ?, ?, ?, ?, 'applied', ?, 'applied', ?)`).run(id,actor.organizationId,candidateId,requisitionId,reference,source,notes); sqlite.prepare(`INSERT INTO application_history (id, organization_id, application_id, previous_status, new_status, actor_user_id, reason) VALUES (?, ?, ?, NULL, 'applied', ?, ?)`).run(nanoid(),actor.organizationId,id,actor.id,'Application created'); recordAuditSync({organizationId:actor.organizationId,actorUserId:actor.id,action:'application_created',entityType:'application',entityId:id}); }); revalidatePath('/recruitment'); revalidatePath('/recruitment/applications'); revalidatePath(`/recruitment/jobs/${requisitionId}`); revalidatePath(`/recruitment/candidates/${candidateId}`); } catch(err) { return {error:errorMessage(err,'Unable to create application.')}; }
+  try { withSqliteTransactionSync(() => { sqlite.prepare(`INSERT INTO applications (id, organization_id, candidate_id, requisition_id, application_reference, status, source, current_stage, notes) VALUES (?, ?, ?, ?, ?, 'applied', ?, 'applied', ?)`).run(id,actor.organizationId,candidateId,requisitionId,reference,source,notes); recordCandidateActivitySync({organizationId:actor.organizationId,candidateId,applicationId:id,activityType:'application_created',actorUserId:actor.id,summary:`Application ${reference} created`}); sqlite.prepare(`INSERT INTO application_history (id, organization_id, application_id, previous_status, new_status, previous_stage, new_stage, actor_user_id, reason) VALUES (?, ?, ?, NULL, 'applied', NULL, 'applied', ?, ?)`).run(nanoid(),actor.organizationId,id,actor.id,'Application created'); recordAuditSync({organizationId:actor.organizationId,actorUserId:actor.id,action:'application_created',entityType:'application',entityId:id}); }); revalidatePath('/recruitment'); revalidatePath('/recruitment/applications'); revalidatePath(`/recruitment/jobs/${requisitionId}`); revalidatePath(`/recruitment/candidates/${candidateId}`); } catch(err) { return {error:errorMessage(err,'Unable to create application.')}; }
   redirect(`/recruitment/applications/${id}`);
 }
 
 export async function changeApplicationStatusAction(applicationId: string, status: string, formData?: FormData): Promise<void> {
   const actor = await requireRoleForAction('admin', 'hr');
-  const reason = formData?.get('reason') ? String(formData.get('reason')).trim() : undefined;
-  if (!applicationStatuses.includes(status as ApplicationStatus)) throw new Error('Invalid application status.');
-  withSqliteTransactionSync(() => {
-    const row = sqlite.prepare('SELECT status FROM applications WHERE organization_id=? AND id=?').get(actor.organizationId,applicationId) as {status?: string}|undefined; if(!row) throw new Error('Application not found.');
-    if (!applicationStatuses.includes(row.status as ApplicationStatus)) throw new Error('Application has an invalid current status.');
-    const previousStatus = row.status as ApplicationStatus;
-    const nextStatus = status as ApplicationStatus;
-    if(!canTransitionApplicationStatus(previousStatus,nextStatus)) throw new Error(`Cannot move a ${previousStatus} application to ${nextStatus}.`);
-    sqlite.prepare('UPDATE applications SET status=?, current_stage=?, updated_at=? WHERE organization_id=? AND id=?').run(nextStatus,nextStatus,new Date().toISOString(),actor.organizationId,applicationId);
-    sqlite.prepare(`INSERT INTO application_history (id, organization_id, application_id, previous_status, new_status, actor_user_id, reason) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(nanoid(),actor.organizationId,applicationId,previousStatus,nextStatus,actor.id,reason?.trim()||null);
-    recordAuditSync({organizationId:actor.organizationId,actorUserId:actor.id,action:'application_status_changed',entityType:'application',entityId:applicationId,metadata:{previousStatus,newStatus:nextStatus,reason:reason?.trim()||null}});
-  });
+  const reason = formData?.get('reason') ? String(formData.get('reason')).trim() : 'Workflow transition';
+  try { changeApplicationWorkflowInTransaction(actor.organizationId, actor.id, applicationId, status, reason); }
+  catch (err) { throw new Error(errorMessage(err, 'Unable to change application stage.')); }
   revalidatePath(`/recruitment/applications/${applicationId}`); revalidatePath('/recruitment/applications'); revalidatePath('/recruitment');
 }

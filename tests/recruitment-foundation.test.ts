@@ -5,7 +5,98 @@ import { sqlite } from '../src/db/client';
 import { canTransitionApplicationStatus, canTransitionJobStatus } from '../src/lib/recruitment';
 
 function reset() {
-  sqlite.exec('DELETE FROM application_history; DELETE FROM applications; DELETE FROM candidates; DELETE FROM job_requisitions; DELETE FROM sessions; DELETE FROM users; DELETE FROM employees; DELETE FROM departments;');
+  sqlite.exec(`
+    DROP TRIGGER IF EXISTS application_history_immutable_update;
+    DROP TRIGGER IF EXISTS application_history_immutable_delete;
+    DROP TRIGGER IF EXISTS interview_decisions_immutable_update;
+    DROP TRIGGER IF EXISTS interview_decisions_immutable_delete;
+    DROP TRIGGER IF EXISTS interview_feedback_immutable_update;
+    DROP TRIGGER IF EXISTS interview_feedback_immutable_delete;
+    DROP TRIGGER IF EXISTS interview_feedback_corrections_immutable_update;
+    DROP TRIGGER IF EXISTS interview_feedback_corrections_immutable_delete;
+    DROP TRIGGER IF EXISTS candidate_activities_immutable_update;
+    DROP TRIGGER IF EXISTS candidate_activities_immutable_delete;
+
+    DELETE FROM interview_feedback_corrections;
+    DELETE FROM interview_decisions;
+    DELETE FROM interview_feedback;
+    DELETE FROM interview_participants;
+    DELETE FROM candidate_activities;
+    DELETE FROM candidate_notes;
+    DELETE FROM interviews;
+    DELETE FROM interview_rounds;
+    DELETE FROM recruitment_stages;
+    DELETE FROM application_history;
+    DELETE FROM applications;
+    DELETE FROM candidates;
+    DELETE FROM job_requisitions;
+    DELETE FROM sessions;
+    DELETE FROM employees;
+    DELETE FROM departments;
+    DELETE FROM users;
+  `);
+
+  sqlite.exec(`
+    CREATE TRIGGER application_history_immutable_update
+    BEFORE UPDATE ON application_history
+    BEGIN
+      SELECT RAISE(ABORT, 'Application history is immutable.');
+    END;
+
+    CREATE TRIGGER application_history_immutable_delete
+    BEFORE DELETE ON application_history
+    BEGIN
+      SELECT RAISE(ABORT, 'Application history is immutable.');
+    END;
+
+    CREATE TRIGGER interview_decisions_immutable_update
+    BEFORE UPDATE ON interview_decisions
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview decisions are immutable.');
+    END;
+
+    CREATE TRIGGER interview_decisions_immutable_delete
+    BEFORE DELETE ON interview_decisions
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview decisions are immutable.');
+    END;
+
+    CREATE TRIGGER interview_feedback_immutable_update
+    BEFORE UPDATE ON interview_feedback
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview feedback is immutable.');
+    END;
+
+    CREATE TRIGGER interview_feedback_immutable_delete
+    BEFORE DELETE ON interview_feedback
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview feedback is immutable.');
+    END;
+
+    CREATE TRIGGER interview_feedback_corrections_immutable_update
+    BEFORE UPDATE ON interview_feedback_corrections
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview feedback corrections are immutable.');
+    END;
+
+    CREATE TRIGGER interview_feedback_corrections_immutable_delete
+    BEFORE DELETE ON interview_feedback_corrections
+    BEGIN
+      SELECT RAISE(ABORT, 'Interview feedback corrections are immutable.');
+    END;
+
+    CREATE TRIGGER candidate_activities_immutable_update
+    BEFORE UPDATE ON candidate_activities
+    BEGIN
+      SELECT RAISE(ABORT, 'Candidate activities are immutable.');
+    END;
+
+    CREATE TRIGGER candidate_activities_immutable_delete
+    BEFORE DELETE ON candidate_activities
+    BEGIN
+      SELECT RAISE(ABORT, 'Candidate activities are immutable.');
+    END;
+  `);
   sqlite.exec("INSERT INTO organizations (id,name,slug,status) VALUES ('org_default','Default Organization','default','active'),('org_b','Organization B','organization-b','active') ON CONFLICT(id) DO UPDATE SET name=excluded.name,slug=excluded.slug,status=excluded.status;");
   sqlite.exec("INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('admin-a','org_default','admin-a@example.test','x','x','admin',1),('hr-a','org_default','hr-a@example.test','x','x','hr',1),('admin-b','org_b','admin-b@example.test','x','x','admin',1);");
   sqlite.exec("INSERT INTO departments (id,organization_id,name) VALUES ('dept-a','org_default','Engineering'),('dept-b','org_b','Engineering');");

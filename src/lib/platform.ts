@@ -6,6 +6,7 @@ import { recordAuditSync } from './audit';
 import { hashPassword } from './password';
 import { ForbiddenError } from './auth';
 import type { CurrentUser } from './session';
+import { provisionDefaultRecruitmentStagesSync } from './recruitment-workflow';
 
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const LOCALE_PATTERN = /^[a-z]{2}(?:-[A-Z]{2})?$/;
@@ -108,6 +109,7 @@ export function provisionOrganizationInTransaction(actor: CurrentUser, input: Pr
     sqlite.prepare('INSERT INTO organizations (id, name, slug, status) VALUES (?, ?, ?, \'active\')').run(organizationId, name, slug);
     sqlite.prepare('INSERT INTO organization_settings (organization_id) VALUES (?)').run(organizationId);
     sqlite.prepare(`INSERT INTO users (id, organization_id, email, password_hash, password_salt, role, is_active) VALUES (?, ?, ?, ?, ?, 'admin', 1)`).run(adminUserId, organizationId, email, hash, salt);
+    provisionDefaultRecruitmentStagesSync(organizationId, adminUserId);
     failureHook?.();
     recordPlatformAuditSync({ actorUserId: actor.id, action: 'organization_provisioned', entityType: 'organization', entityId: organizationId, metadata: { slug, initialAdministratorUserId: adminUserId, initialAdministratorEmail: email } });
     recordPlatformAuditSync({ actorUserId: actor.id, action: 'initial_administrator_provisioned', entityType: 'user', entityId: adminUserId, metadata: { organizationId, email } });

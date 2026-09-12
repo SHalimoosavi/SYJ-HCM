@@ -48,7 +48,7 @@ try {
     fail(`Pending migrations: ${pending.join(', ')}. Run npm run db:migrate before npm start.`);
   }
 
-  const requiredTables = ['organizations', 'users', 'sessions', 'login_rate_limits', 'employees', 'departments', 'leave_types', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs', 'organization_settings', 'platform_administrators', 'platform_audit_logs', 'job_requisitions', 'candidates', 'applications', 'application_history'];
+  const requiredTables = ['organizations', 'users', 'sessions', 'login_rate_limits', 'employees', 'departments', 'leave_types', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs', 'organization_settings', 'platform_administrators', 'platform_audit_logs', 'job_requisitions', 'candidates', 'applications', 'application_history', 'recruitment_stages', 'interview_rounds', 'interviews', 'interview_participants', 'interview_feedback', 'interview_feedback_corrections', 'interview_decisions', 'candidate_notes', 'candidate_activities'];
   const missingConfiguration = db.prepare(`SELECT count(*) AS count FROM organizations o LEFT JOIN organization_settings s ON s.organization_id = o.id WHERE s.organization_id IS NULL`).get() as { count: number };
   if (Number(missingConfiguration.count) > 0) fail('Organization configuration is missing for one or more tenants. Run npm run db:migrate.');
 

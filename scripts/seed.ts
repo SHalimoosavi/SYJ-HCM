@@ -8,6 +8,7 @@ import { organizations, departments, employees, users, leaveTypes, leaveBalances
 import { hashPassword } from '../src/lib/password';
 import { nanoid } from 'nanoid';
 import { DEFAULT_ORGANIZATION_ID } from '../src/lib/tenant';
+import { provisionDefaultRecruitmentStagesSync } from '../src/lib/recruitment-workflow';
 
 async function main() {
   if (process.env.ALLOW_DEV_SEED !== 'true') {
@@ -46,8 +47,9 @@ async function main() {
   });
 
   const { hash, salt } = hashPassword('ChangeMe123!');
+  const adminUserId = nanoid();
   await db.insert(users).values({
-    id: nanoid(),
+    id: adminUserId,
     organizationId: DEFAULT_ORGANIZATION_ID,
     email: 'admin@syj-hcm.local',
     passwordHash: hash,
@@ -73,6 +75,8 @@ async function main() {
   });
 
   const { hash: h2, salt: s2 } = hashPassword('ChangeMe123!');
+  provisionDefaultRecruitmentStagesSync(DEFAULT_ORGANIZATION_ID, adminUserId);
+
   await db.insert(users).values({
     id: nanoid(),
     organizationId: DEFAULT_ORGANIZATION_ID,

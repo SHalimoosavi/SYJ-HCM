@@ -1,295 +1,576 @@
 # SYJ-HCM
 
-Sayanjali Human Capital Management — secure multi-tenant HCM foundation evolving into a SaaS-ready product platform.
+**SAYANJALI NEXUS — Human Capital Management + Applicant Tracking System**
 
-## Current release
+Current development release: **v0.11.0-alpha**
+Current phase: **Phase 2.2 — Recruitment Workflow & Interview Management**
 
-- **Current development release:** `v0.10.0-alpha`
-- **Phase:** `2.1 — Recruitment / ATS Foundation`
-- **Previous release:** `v0.9.5-alpha — Phase 1.2c Productization / SaaS Foundation`
-- **Baseline commit:** `d4f7a944fce83864894fe37ab2534e0088b97c25`
+SYJ-HCM is a multi-tenant HCM/ATS application built around a deliberately lightweight production architecture: Next.js, TypeScript, Server Actions, Drizzle ORM, SQLite, and Node.js built-in `node:sqlite`.
 
-The repository uses real SQLite-backed application state. Tenant and platform authorization are enforced on the server; browser state is never an authority for organization ownership or platform privilege.
-
-## Architecture
+## 1. Architecture
 
 ```text
-PLATFORM
-└── platform_administrators
-      │
-      └── authenticated user
-            │
-            └── ORGANIZATION
-                  ├── admin
-                  ├── hr
-                  └── employee
-                        │
-                        ├── Employees
-                        ├── Leave
-                        └── Attendance
+Next.js 15
+  ├─ Server Components
+  ├─ Server Actions
+  └─ React UI
+        │
+        ▼
+Authentication / Sessions / RBAC
+        │
+        ▼
+Authenticated organization context
+        │
+        ├─ Core HR
+        ├─ Leave
+        ├─ Attendance
+        ├─ Organization / Platform administration
+        └─ Recruitment / ATS
+              ├─ Jobs
+              ├─ Candidates
+              ├─ Applications
+              ├─ Workflow stages
+              ├─ Interviews / rounds / panels
+              ├─ Feedback / corrections
+              ├─ Decisions
+              ├─ Notes
+              └─ Candidate activity timeline
+        │
+        ▼
+Drizzle ORM / sqlite-proxy
+        │
+        ▼
+Node.js built-in node:sqlite
+        │
+        ▼
+SQLite
 ```
 
-Platform administration is a separate server-side capability. An organization `admin` is **not** automatically a platform administrator.
+No `better-sqlite3`, `sqlite3`, Redis, Kafka, RabbitMQ, PostgreSQL, microservices, Kubernetes, or external search infrastructure is required.
 
-Technology remains intentionally lightweight:
+## 2. Requirements
 
-- Next.js 15.5.25
-- React 18.3.1
-- TypeScript
-- Drizzle ORM 0.45.2
-- SQLite via Node.js built-in `node:sqlite`
-- `drizzle-orm/sqlite-proxy`
-- Tailwind CSS
-- Node built-in test runner
-- Node.js 22.5.0+
+- Node.js **22.5.0 or newer**. CI currently uses Node 24.18.0.
+- npm compatible with the installed Node.js release.
+- Linux, macOS, Windows, or a compatible Node environment.
+- Termux on Android can be used for local development when a supported Node.js installation is available.
+- A writable directory for the SQLite database.
 
-No `better-sqlite3`, `sqlite3`, Redis, external database, native SQLite addon, microservice, or Kubernetes dependency is introduced.
-
-## Phase 1 — Core HR
-
-Implemented:
-
-- scrypt password hashing
-- HMAC-signed DB-backed sessions
-- seven-day absolute and 24-hour idle session policy
-- persistent login throttling
-- password rotation and session revocation
-- server-side RBAC for `admin`, `hr`, and `employee`
-- employee CRUD and status management
-- employee self-service profile
-- leave application, approval, rejection and cancellation
-- leave overlap and balance validation
-- transaction-safe leave and attendance mutations
-- browser geolocation attendance with server-authoritative timestamps
-- database attendance integrity guards
-- immutable tenant audit logs
-
-## Phase 1.1 — Production security hardening
-
-Implemented:
-
-- persistent failed-login throttling and audit events
-- authorization-failure auditing
-- absolute + idle session expiration
-- password-change session revocation
-- explicit authorization matrix
-- transaction boundaries around security-sensitive mutations
-- transactional migration runner
-- attendance coordinate/clock-order database guards
-- leave state-machine guard
-- immutable audit triggers
-- CSP, security headers and HSTS in production
-- private/no-store authenticated responses
-- fail-closed production startup validation
-- CI locked-install, typecheck, test, build and production dependency audit gates
-
-## Phase 1.2a — Multi-tenant foundation
-
-Implemented:
-
-- `organizations` tenant root
-- required `organization_id` on tenant-owned tables
-- populated-data migration/backfill
-- tenant-scoped employees, users, sessions, leave, attendance and audit records
-- authenticated server-derived organization context
-- cross-tenant negative tests
-- organization slug uniqueness
-- tenant-safe foreign keys and indexes
-
-## Phase 1.2b — Organization / Tenant Management
-
-Implemented:
-
-- organization overview and identity administration
-- server-side name/slug validation
-- organization member listing
-- member activation/deactivation
-- member role management
-- employee ↔ user association within one tenant
-- active-administrator lockout protection
-- tenant-scoped session revocation on deactivation
-- organization-aware navigation
-- organization/member audit events
-- cross-tenant read, mutation and enumeration protections
-
-## Phase 1.2c — Productization / SaaS Foundation
-
-Implemented in this release:
-
-### Platform administration
-
-- separate `platform_administrators` capability table
-- server-side platform authorization
-- platform organization inventory
-- platform-level lifecycle controls
-- platform audit visibility
-- controlled server-side bootstrap command for granting platform capability
-
-Bootstrap an existing account from a trusted server shell only:
+## 3. Clone and install
 
 ```bash
-npm run platform:grant-admin -- admin@example.com
-```
-
-This does not convert the user's organization role; the user remains `admin`, `hr`, or `employee` for tenant operations.
-
-### Organization provisioning
-
-A platform administrator can atomically create:
-
-1. organization
-2. organization defaults
-3. initial administrator account
-4. platform audit events
-
-Provisioning validates identity, slug uniqueness, email uniqueness and password length before entering a transaction. A deliberate failure after account creation rolls back the organization, configuration and user records together.
-
-No email invitation or verification system is claimed to exist.
-
-### Organization lifecycle
-
-Supported states:
-
-- `active`
-- `suspended`
-
-Suspension:
-
-- blocks normal authenticated tenant access
-- revokes tenant sessions
-- preserves all tenant data
-- remains reversible by a platform administrator
-- does not delete organizations or tenant records
-
-A platform administrator can still access `/platform` even when the platform administrator's own organization is suspended. The platform control intentionally lives outside the authenticated tenant application layout.
-
-### Tenant configuration
-
-Each organization now receives an `organization_settings` row with validated, typed defaults for:
-
-- timezone
-- locale
-- date format
-- week start day
-
-Configuration is organization-owned, server-scoped and audit logged. It is intentionally small so future HR modules can build their own typed policies without introducing an arbitrary JSON settings bucket.
-
-### Audit model
-
-Two immutable audit boundaries now exist:
-
-- `audit_logs` — tenant-scoped operational/security events
-- `platform_audit_logs` — platform-scoped administrative events
-
-Platform audit does not weaken or overload the tenant audit table.
-
-## Security boundary
-
-The server derives tenant context from the authenticated DB-backed session. Client-provided organization IDs are only target selectors for deliberately platform-wide operations; they are never accepted as proof of authority.
-
-Normal organization actions remain tenant-scoped. Platform actions require membership in `platform_administrators` and are independently authorized server-side.
-
-Suspended organizations cannot use the normal `(app)` route or Server Action boundary. Platform administrators retain access to platform recovery controls.
-
-## Database migrations
-
-```text
-0000_init.sql                              Phase 1 schema
-0001_phase1_1_security.sql                 Phase 1.1 security constraints
-0002_attendance_clock_order_insert_guard.sql Phase 1.1 follow-up guard
-0003_multi_tenant_foundation.sql           Phase 1.2a tenant foundation
-0004_phase1_2c_productization.sql          Phase 1.2c SaaS foundation
-```
-
-The new migration is additive. Historical migrations are unchanged.
-
-The migration runner applies each migration inside `BEGIN IMMEDIATE` / `COMMIT` and records it in `__migrations`.
-
-## Setup
-
-```bash
+git clone https://github.com/SHalimoosavi/SYJ-HCM.git
+cd SYJ-HCM
 npm ci
+```
+
+## 4. Environment configuration
+
+Create the local environment file:
+
+```bash
 cp .env.example .env
-# Set a unique random SESSION_SECRET with at least 32 characters.
+```
+
+`.env.example` contains safe placeholders only. Never commit `.env` or real credentials.
+
+### Variables
+
+`DATABASE_PATH`
+
+Path to the SQLite database. The default is:
+
+```text
+./data/syj-hcm.db
+```
+
+`SESSION_SECRET`
+
+A unique random secret used to sign session cookies. It must be at least 32 characters. Generate one with:
+
+```bash
+openssl rand -hex 32
+```
+
+`ALLOW_DEV_SEED`
+
+Must be `false` for normal operation and production. The development-only seed command refuses to run unless explicitly set to `true`.
+
+Example safe `.env`:
+
+```dotenv
+DATABASE_PATH=./data/syj-hcm.db
+SESSION_SECRET=replace-with-a-long-random-value-generated-for-this-environment
+ALLOW_DEV_SEED=false
+```
+
+## 5. Database setup
+
+SYJ-HCM stores its SQLite database at `DATABASE_PATH`. The application uses an explicit migration ledger named `__migrations`.
+
+Run migrations:
+
+```bash
 npm run db:migrate
+```
+
+The migration runner applies each SQL file once inside a SQLite transaction. Running the command again safely skips migrations already recorded in `__migrations`.
+
+Current migration sequence:
+
+```text
+0000_init.sql
+0001_phase1_1_security.sql
+0002_attendance_clock_order_insert_guard.sql
+0003_multi_tenant_foundation.sql
+0004_phase1_2c_productization.sql
+0005_phase2_1_recruitment_foundation.sql
+0006_phase2_2_recruitment_workflow_interviews.sql
+```
+
+Historical migrations are never rewritten.
+
+## 6. Development startup
+
+After dependencies and migrations are installed:
+
+```bash
+npm run dev
+```
+
+The normal development server is started by Next.js.
+
+## 7. Production build and startup
+
+Build:
+
+```bash
 npm run build
+```
+
+Before production startup, migrations must be current:
+
+```bash
+npm run db:migrate
+```
+
+Start:
+
+```bash
 npm start
 ```
 
-For development seed data only:
+Production startup performs fail-closed checks for the session secret, migration ledger, pending migrations, organization configuration, and required schema tables before starting Next.js.
+
+## 8. Verification commands
+
+Typecheck:
+
+```bash
+npm run typecheck
+```
+
+Tests:
+
+```bash
+npm test
+```
+
+Production dependency audit:
+
+```bash
+npm audit --omit=dev --audit-level=high
+```
+
+Repository whitespace check:
+
+```bash
+git diff --check
+```
+
+## 9. Development seed
+
+The seed script is intentionally opt-in and must never be enabled in production:
 
 ```bash
 ALLOW_DEV_SEED=true npm run db:seed
 ```
 
-Production startup rejects `ALLOW_DEV_SEED=true`.
+If the database already contains users, the seed command skips the operation.
 
-## Validation
+## 10. Platform administrator bootstrap
 
-The Phase 1.2c build environment could not complete `npm ci` because outbound package installation was unavailable and the uploaded repository did not contain `node_modules`. Therefore dependency-dependent commands were **not fabricated as PASS**.
+Platform administration is separate from organization roles.
 
-Completed offline validation:
+To grant platform capability to an existing account from a trusted server shell:
 
-- fresh migration: **PASS**
-- populated v0.9.4 migration/backfill: **PASS**
-- migration schema/trigger checks: **PASS**
-- source/repository consistency review: **PASS**
+```bash
+npm run platform:grant-admin -- admin@example.com
+```
 
-Required local validation remains:
+This does **not** change the user's organization role. Platform capability is stored separately in `platform_administrators`.
+
+## 11. Organization setup
+
+A platform administrator can provision an organization from `/platform`. Provisioning creates the organization, organization settings, initial administrator, and Phase 2.2 default recruitment stages atomically.
+
+For a new organization:
+
+1. Provision the organization from the platform administration screen.
+2. Sign in as the initial administrator.
+3. Create/link employees and organization members.
+4. Use `/recruitment` to create jobs, candidates, and applications.
+5. Move applications through the controlled workflow.
+6. Schedule interviews from the application workspace or `/recruitment/interviews`.
+7. Assign one or more organization users to the interview panel.
+8. Complete the interview and allow assigned interviewers to submit feedback.
+9. Record a human interview decision.
+
+## 12. Recruitment workflow
+
+The application lifecycle remains controlled server-side:
+
+```text
+applied
+   ↓
+screening
+   ↓
+shortlisted
+   ↓
+interview
+   ↓
+evaluation
+   ↓
+offer
+   ↓
+hired
+```
+
+Rejection and withdrawal are controlled exits. Rejected/withdrawn records can move to archived.
+
+Phase 2.2 adds tenant-owned workflow stage configuration. The ten lifecycle stages retain stable status keys while their display names, order, and active state can be managed from `/recruitment/stages`. This deliberately avoids turning SYJ-HCM into an arbitrary executable workflow engine.
+
+The server validates every transition independently of the UI.
+
+## 13. Interview workflow
+
+An application may have multiple rounds. Each round can contain one or more interview sessions.
+
+```text
+Application
+  ├─ Round 1: Screening
+  │    └─ Interview session
+  ├─ Round 2: Technical
+  │    └─ Interview session
+  ├─ Round 3: Manager
+  │    └─ Interview session
+  └─ Round 4: Final
+       └─ Interview session
+```
+
+Interview sessions contain:
+
+- application and round
+- title and controlled interview type
+- status
+- canonical UTC start/end timestamps
+- intended IANA timezone
+- location/meeting details
+- organizer
+- panel membership
+
+Interviewers are existing organization users. Assignment does not grant global recruitment permissions.
+
+## 14. Scheduling and time zones
+
+The scheduling form accepts a local wall-clock datetime plus an explicit IANA timezone such as `Asia/Kolkata`.
+
+The server validates the local time and converts it to a canonical UTC ISO timestamp. The original timezone is retained for correct display.
+
+The system rejects invalid dates, invalid/nonexistent local times, and `end <= start`.
+
+Interviewer conflicts are checked server-side. Active overlapping interviews for the same interviewer are rejected. Scheduling and participant creation occur under SQLite `BEGIN IMMEDIATE` transaction semantics so concurrent writers cannot interleave the critical operation on the application connection.
+
+## 15. Interview status lifecycle
+
+```text
+scheduled → confirmed → completed
+scheduled → cancelled
+scheduled → rescheduled → confirmed/completed
+confirmed → cancelled
+confirmed → no_show
+```
+
+Completed, cancelled, and no-show interviews cannot be silently rewritten through the normal lifecycle actions.
+
+## 16. Feedback and decisions
+
+Feedback is structured:
+
+- score: 1–5
+- recommendation: `strong_yes`, `yes`, `neutral`, `no`, `strong_no`
+- strengths
+- concerns
+- notes
+- submitting interviewer
+- server timestamp
+
+Only an assigned interviewer can submit their own feedback. HR/admin can review authorized organizational feedback. Submitted feedback is immutable.
+
+Corrections are stored separately with the previous values, new values, actor, reason, and timestamp. This preserves the historical evaluation instead of silently overwriting it.
+
+Interview decisions are controlled:
+
+```text
+advance
+hold
+reject
+```
+
+`advance` integrates with the application workflow by moving an eligible application to `evaluation`. `reject` moves an eligible application to `rejected`. `hold` records the decision without forcing a lifecycle transition.
+
+## 17. Candidate activity timeline
+
+Business activity is separate from security/compliance audit logging.
+
+Candidate activities include real workflow events such as:
+
+- candidate creation/update
+- application creation
+- stage changes
+- interview scheduling/rescheduling/cancellation
+- interviewer assignment/removal
+- feedback submission/correction
+- decisions
+- notes
+- rejection/withdrawal/archive
+
+Activity records are append-only and tenant scoped. The existing immutable `audit_logs` table remains the security/compliance event stream.
+
+## 18. Recruitment notes
+
+Internal recruitment notes can be attached to a candidate and optionally to a specific application.
+
+Notes are:
+
+- tenant scoped
+- server-authorized
+- length validated
+- rendered as plain text
+- audit logged
+- excluded from employee-facing recruitment access
+
+No HTML is rendered from note content.
+
+## 19. Recruitment UI routes
+
+```text
+/recruitment
+/recruitment/jobs
+/recruitment/jobs/new
+/recruitment/jobs/[id]
+/recruitment/candidates
+/recruitment/candidates/new
+/recruitment/candidates/[id]
+/recruitment/applications
+/recruitment/applications/new
+/recruitment/applications/[id]
+/recruitment/interviews
+/recruitment/interviews/new
+/recruitment/interviews/[id]
+/recruitment/stages
+```
+
+The application detail page is the central recruitment workspace. Candidate detail includes applications, notes, interviews, and the business activity timeline.
+
+Assigned employees can access their own interview records directly through `/recruitment/interviews`; they do not receive general ATS management permissions.
+
+## 20. RBAC and tenant isolation
+
+Organization roles remain:
+
+- `admin`
+- `hr`
+- `employee`
+
+Admin and HR receive recruitment management capabilities through the existing server-side authorization architecture.
+
+Employees do not receive unrestricted ATS access. An employee assigned as an interviewer can access the specific interview permitted by the interviewer ownership check and can submit their own feedback after completion.
+
+Every recruitment query/mutation uses the authenticated organization context. Client-provided organization IDs are never accepted as tenant authority.
+
+Database relationships use `(organization_id, id)` composite foreign-key protection where appropriate, preventing cross-tenant references such as an organization A interview pointing at an organization B application or interviewer.
+
+Suspended organizations are rejected both by the authenticated Server Action boundary and by Phase 2.2 business mutation guards.
+
+## 21. Audit and history
+
+Security/compliance events continue to use the existing immutable tenant audit infrastructure.
+
+Phase 2.2 additionally records business workflow activity and application stage history. This separation avoids duplicating the audit system while preserving the history users need for recruitment operations.
+
+Important recruitment events are audit logged, including stage changes, interview mutations, participant changes, feedback submission/correction, decisions, and protected note changes.
+
+## 22. Migration validation
+
+For a fresh database:
+
+```bash
+npm run db:migrate
+```
+
+For an existing v0.10.0-alpha database, the same command applies only the new `0006` migration and preserves previous data.
+
+Migration idempotency is validated by running the migration runner again; already-applied migrations are skipped.
+
+Foreign-key integrity can be checked with the repository SQLite client or a trusted SQLite shell:
+
+```sql
+PRAGMA foreign_key_check;
+```
+
+The expected result is zero rows.
+
+## 23. Production deployment guidance
+
+Development:
 
 ```bash
 npm ci
-npm test
+cp .env.example .env
+# configure a development SESSION_SECRET
+npm run db:migrate
+npm run dev
+```
+
+Production:
+
+```bash
+npm ci
+# configure production .env outside source control
+npm run db:migrate
 npm run typecheck
+npm test
 npm run build
 npm audit --omit=dev --audit-level=high
-git diff --check
+npm start
 ```
 
-Also manually exercise platform provisioning, suspension/recovery and tenant configuration after migration.
+Use a unique production `SESSION_SECRET`. Protect the SQLite file and its WAL files with filesystem permissions. Back up the database using a SQLite-aware backup strategy rather than copying a live WAL database blindly. Keep `.env` outside source control and use a secret-management mechanism appropriate to the deployment environment.
 
-## Known limitations / deliberate deferrals
+## 24. Troubleshooting
 
-- Email invitations, verification, password reset, MFA, SSO and OAuth are not implemented.
-- Initial administrator credentials are supplied through the platform provisioning form; the operator must transfer them through a secure channel. No email delivery is claimed.
-- Platform administrator bootstrap is intentionally a trusted server-shell operation rather than a browser workflow.
-- The current login identity remains globally unique by email because the existing authentication flow resolves identity before tenant context exists.
-- Organization deletion is intentionally not implemented.
-- Billing, subscriptions, licensing and commercial provisioning are not implemented.
-- Attendance and leave policies remain existing Phase 1 functionality; this phase establishes the configuration boundary rather than a full policy engine.
-- Advanced observability, backups/restore automation and external infrastructure remain future work.
+### Missing session secret
 
-## Roadmap
+Error:
 
 ```text
-Phase 1     Core HR                              COMPLETE
-Phase 1.1   Production Security Hardening       COMPLETE
-Phase 1.2a  Multi-Tenant Foundation              COMPLETE
-Phase 1.2b  Organization / Tenant Management     COMPLETE
-Phase 1.2c  Productization / SaaS Foundation     CURRENT — v0.9.5-alpha
-Phase 2     Recruiting / ATS                     NEXT
-Phase 3     HR Operations Expansion
-Phase 4     Payroll + Analytics
+SESSION_SECRET must be configured with at least 32 characters.
 ```
 
-Phase 2 should build Recruiting/ATS on this tenant, organization, authorization, audit, lifecycle and configuration foundation. It should not bypass these boundaries.
+Generate a random secret and put it in `.env`:
 
+```bash
+openssl rand -hex 32
+```
 
-## Phase 2.1 — Recruitment / ATS Foundation
+### Pending migrations
 
-Current release: **v0.10.0-alpha**. Phase 2.1 adds tenant-scoped job requisitions, reusable candidates, applications, controlled recruitment status transitions, application history, recruitment audit events, and working recruitment management UI.
+If production startup reports pending migrations:
 
-### Recruitment routes
-- `/recruitment` — recruitment overview
-- `/recruitment/jobs` — job requisitions
-- `/recruitment/candidates` — candidates
-- `/recruitment/applications` — applications
+```bash
+npm run db:migrate
+```
 
-### Security
-Recruitment operations reuse the existing authenticated tenant context, server-side RBAC, suspended-organization enforcement and immutable tenant audit log. Cross-tenant resource references are rejected and tenant-aware database foreign keys protect key relationships.
+Then retry:
 
-### Phase 2.1 boundaries
-Resume/file storage, configurable pipelines, interviews, offers, notifications, AI screening, billing and payroll are intentionally deferred. See `PHASE_2.1_REPORT.md`.
+```bash
+npm start
+```
 
-### Next
-**Phase 2.2 — Candidate Pipeline**: configurable stages, screening/shortlisting, richer stage history, reasons and pipeline views.
+### Missing database
+
+Create the schema with:
+
+```bash
+npm run db:migrate
+```
+
+### Port already in use
+
+Stop the existing Node/Next process or choose an available development port using the normal Next.js CLI/environment configuration.
+
+### Permission problems
+
+Ensure the directory containing `DATABASE_PATH` is writable by the application process.
+
+### Startup schema validation failure
+
+Do not bypass the check. Run migrations and inspect the exact missing table/configuration message:
+
+```bash
+npm run db:migrate
+```
+
+### SQLite locked/busy errors
+
+The application enables WAL mode and a 5-second busy timeout. Avoid opening the production database with multiple ad-hoc writers while the server is running.
+
+## 25. Security notes
+
+- Tenant authority comes from the authenticated server-side session.
+- Organization lifecycle status is enforced server-side.
+- Sessions are DB-backed, signed, time bounded, and revoked on relevant security events.
+- Recruitment mutations use role/capability checks and tenant-scoped resource validation.
+- Sensitive feedback and notes are not employee-global data.
+- Audit logs are protected by database triggers.
+- Recruitment activity is append-only.
+- No real credentials belong in source control.
+- SQLite runtime data is excluded from Git.
+- No native SQLite dependency is used.
+
+## 26. Current limitations / deliberate deferrals
+
+Phase 2.2 intentionally does **not** implement:
+
+- email/SMS/WhatsApp notifications
+- calendar-provider integration
+- public job publishing
+- careers portal
+- candidate self-service
+- resume/CV or document storage
+- offer management
+- advanced analytics infrastructure
+- AI candidate scoring or automated hiring decisions
+- payroll
+- billing
+- arbitrary workflow scripting
+
+Interview scheduling is stored and validated in SYJ-HCM itself; external calendar synchronization is future work.
+
+The stage configuration foundation uses stable ATS lifecycle status keys with configurable labels/order/active state rather than a generic workflow execution engine.
+
+## 27. Phase roadmap
+
+```text
+Phase 1       Core HR                                  COMPLETE
+Phase 1.1     Production Security Hardening             COMPLETE
+Phase 1.2a    Multi-Tenant Foundation                   COMPLETE
+Phase 1.2b    Organization / Tenant Management          COMPLETE
+Phase 1.2c    SaaS Productization Foundation            COMPLETE
+Phase 2.1     Recruitment / ATS Foundation              COMPLETE
+Phase 2.2     Recruitment Workflow & Interviews         CURRENT
+Phase 2.3     Candidate Documents & Resume Management   NEXT
+Phase 2.4     Job Publishing + Careers Portal
+Phase 2.5     Offer Management
+Phase 2.6     Recruitment Analytics
+Phase 3       HCM Operations / Onboarding
+```
+
+## 28. Phase 2.3 recommendation
+
+The next phase should add secure candidate document management without putting arbitrary files into SQLite. The preferred direction is a storage abstraction with metadata in SQLite, secure upload validation, size/type controls, malware-scanning integration points, signed access, tenant isolation, and document audit events.
+
+## 29. License / project status
+
+This repository is the SYJ-HCM development codebase for SAYANJALI NEXUS. The current version is an alpha development release and should undergo environment-specific security, backup, operational, and acceptance testing before production deployment.

@@ -1,80 +1,53 @@
-# SYJ-HCM v0.10.0-alpha — Phase 2.1 Build Bundle
+# SYJ-HCM v0.11.0-alpha — Phase 2.2 Build Bundle
 
-This bundle is the complete repository build artifact for:
+**Phase 2.2 — Recruitment Workflow & Interview Management**
 
-**SYJ-HCM v0.10.0-alpha — Phase 2.1 Recruitment / ATS Foundation**
-
-## Source baseline
-
-- Baseline: `v0.9.4-alpha`
-- Baseline commit: `d4f7a944fce83864894fe37ab2534e0088b97c25`
-- Build source: complete Phase 1.2b repository ZIP
+This bundle is built directly on the verified `v0.10.0-alpha` / commit `85c5f08` baseline.
 
 ## Included
 
-The archive contains the complete source repository state required for local validation, including:
+- configurable ATS lifecycle stage configuration
+- application stage history extensions
+- candidate/application business activity timeline
+- internal recruitment notes
+- interview rounds and interview sessions
+- interview scheduling with IANA timezone handling and canonical UTC timestamps
+- interviewer/panel membership with tenant-safe relationships
+- server-side interviewer conflict detection
+- structured immutable interview feedback
+- explicit feedback correction history
+- controlled interview decisions integrated with application lifecycle
+- HR/admin recruitment management
+- assigned-interviewer access for employee users without granting global ATS management
+- tenant isolation and suspended-organization enforcement
+- recruitment dashboard and interview UI
+- Phase 2.2 automated security/domain tests
+- complete installation/deployment documentation
+- additive migration `drizzle/0006_phase2_2_recruitment_workflow_interviews.sql`
 
-- application source
-- platform administration
-- organization management
-- tenant configuration
-- tests
-- database migrations
-- package metadata and lockfile
-- CI workflow
-- scripts
-- README
-- phase reports
+## Architecture preserved
 
-## Intentionally excluded
+Next.js + TypeScript + React + Server Actions + Drizzle ORM + `drizzle-orm/sqlite-proxy` + Node.js built-in `node:sqlite` + SQLite.
 
-The archive does not contain:
+No native SQLite binaries, Redis, Kafka, RabbitMQ, PostgreSQL, microservices, Kubernetes, or external search service are introduced.
 
-- `.git`
-- `node_modules`
-- `.next`
-- `.env` / `.env.*`
-- local database files
-- SQLite database artifacts
-- TypeScript build caches
-- private keys or credentials
+## Deliberate boundaries
 
-## Local workflow
+This phase does not implement external email/SMS, calendar synchronization, resume/document storage, public careers publishing, candidate self-service, offer management, advanced analytics infrastructure, payroll, billing, or AI hiring decisions.
 
-Preserve your existing Git checkout and replace/update the repository working tree from this archive.
+## Validation
 
-Then run:
+The bundle is intended to be validated with:
 
 ```bash
 npm ci
-npm run db:migrate
-npm test
 npm run typecheck
+npm test
 npm run build
 npm audit --omit=dev --audit-level=high
 git diff --check
 ```
 
-Also manually validate:
+Do not place `.env`, databases, secrets, `node_modules`, `.next`, or runtime caches into the release archive.
 
-- platform administrator authorization
-- organization provisioning
-- provisioning rollback
-- tenant suspension
-- tenant recovery
-- organization configuration isolation
-- existing Phase 1 / 1.1 / 1.2a / 1.2b workflows
-
-## GitHub operations
-
-No GitHub push, tag, PR, merge, or release operation is performed by the build artifact.
-
-Recommended release tag:
-
-```text
-v0.9.5-alpha
-```
-
-## Phase 2.1
-
-This bundle adds the Recruitment / ATS foundation described in `PHASE_2.1_REPORT.md`, including jobs, candidates, applications, controlled lifecycle transitions, recruitment history, tenant-aware RBAC, audit integration, and database integrity protections.
+Build-sandbox note: dependency installation (`npm ci`) was blocked by sandbox package-network timeout, so full `npm test`, `npm run typecheck`, and `npm run build` require final validation in the target Node/npm environment. SQL migration, foreign-key, business-runtime smoke, source parsing, dependency-diff, whitespace, and offline lockfile audit checks were completed locally in the build sandbox.

@@ -1,0 +1,6 @@
+import Link from 'next/link';
+import { requireRole } from '@/lib/auth';
+import { getOrganizationConfiguration } from '@/lib/platform';
+import { getInterviewFormData } from '@/lib/recruitment-workflow';
+import { InterviewForm } from '../../workflow-forms';
+export default async function NewInterviewPage({searchParams}:{searchParams:Promise<{applicationId?:string}>}){const u=await requireRole('admin','hr');const [data,settings]=await Promise.all([getInterviewFormData(u.organizationId),getOrganizationConfiguration(u)]);const p=await searchParams;return <div className="max-w-5xl space-y-6"><div><Link className="text-sm text-brand-600 hover:underline" href="/recruitment/interviews">← Interviews</Link><h1 className="mt-2 text-2xl font-semibold">Schedule interview</h1><p className="mt-1 text-sm text-surface-500">Times are entered in the selected IANA timezone and stored canonically as UTC.</p></div>{data.applications.length===0?<div className="card p-8 text-sm text-surface-500">No shortlisted or interview-stage applications are available.</div>:<section className="card p-6"><InterviewForm applications={data.applications} people={data.people} rounds={data.rounds} defaultTimezone={settings?.timezone||'UTC'} defaultApplicationId={p.applicationId}/></section>}</div>}
