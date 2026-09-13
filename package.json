@@ -1,8 +1,8 @@
 {
   "name": "syj-hcm",
-  "version": "0.13.0-alpha",
+  "version": "0.14.0-alpha",
   "private": true,
-  "description": "SYJ-HCM - Phase 2.4 job publishing and careers portal",
+  "description": "SYJ-HCM - Phase 2.5 offers and offer management",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

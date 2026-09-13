@@ -29,7 +29,7 @@ export async function getAuthorizedDocument(organizationId: string, documentId: 
   return rows[0] ?? null;
 }
 
-export async function uploadCandidateDocument(params: { candidateId: string; applicationId?: string | null; documentType: DocumentType; file: File; actorUserId: string; organizationId: string }): Promise<{ ok: boolean; error?: string; documentId?: string }> {
+export async function uploadCandidateDocument(params: { candidateId: string; applicationId?: string | null; offerId?: string | null; documentType: DocumentType; file: File; actorUserId: string; organizationId: string }): Promise<{ ok: boolean; error?: string; documentId?: string }> {
   const rejectUpload = (error: string, reason: string): { ok: false; error: string } => {
     try {
       recordAuditSync({
@@ -42,6 +42,7 @@ export async function uploadCandidateDocument(params: { candidateId: string; app
           reason,
           candidateId: params.candidateId,
           applicationId: params.applicationId ?? null,
+          offerId: params.offerId ?? null,
           documentType: params.documentType
         }
       });
@@ -72,6 +73,10 @@ export async function uploadCandidateDocument(params: { candidateId: string; app
     const application = sqlite.prepare('SELECT id FROM applications WHERE organization_id = ? AND id = ? AND candidate_id = ? LIMIT 1').get(params.organizationId, params.applicationId, params.candidateId) as { id: string } | undefined;
     if (!application) return { ok: false, error: 'Application does not belong to the selected candidate.' };
   }
+  if (params.offerId) {
+    const offer = sqlite.prepare(`SELECT o.id FROM offers o JOIN applications a ON a.organization_id=o.organization_id AND a.id=o.application_id WHERE o.organization_id=? AND o.id=? AND a.id=? AND a.candidate_id=? LIMIT 1`).get(params.organizationId, params.offerId, params.applicationId ?? '', params.candidateId) as { id: string } | undefined;
+    if (!offer) return { ok: false, error: 'Offer does not belong to the selected application.' };
+  }
 
   const id = nanoid();
   const key = makeStorageKey(id);
@@ -86,7 +91,7 @@ export async function uploadCandidateDocument(params: { candidateId: string; app
       : scan.status === 'infected' || scan.status === 'rejected'
         ? 'failed'
         : 'pending';
-    sqlite.prepare(`INSERT INTO candidate_documents (id,organization_id,candidate_id,application_id,document_type,original_filename,sanitized_filename,declared_mime_type,detected_mime_type,file_size,storage_provider,storage_key,checksum_sha256,lifecycle_status,scan_status,uploaded_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,current_timestamp,current_timestamp)`).run(id,params.organizationId,params.candidateId,params.applicationId ?? null,params.documentType,params.file.name,input.filename,declared,detected.mime,data.length,'local',key,hash,lifecycle,scan.status,params.actorUserId);
+    sqlite.prepare(`INSERT INTO candidate_documents (id,organization_id,candidate_id,application_id,offer_id,document_type,original_filename,sanitized_filename,declared_mime_type,detected_mime_type,file_size,storage_provider,storage_key,checksum_sha256,lifecycle_status,scan_status,uploaded_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,current_timestamp,current_timestamp)`).run(id,params.organizationId,params.candidateId,params.applicationId ?? null,params.offerId ?? null,params.documentType,params.file.name,input.filename,declared,detected.mime,data.length,'local',key,hash,lifecycle,scan.status,params.actorUserId);
       const auditAction =
         scan.status === 'scanner_unavailable'
           ? 'candidate_document_upload_scanner_unavailable'
@@ -107,6 +112,7 @@ export async function uploadCandidateDocument(params: { candidateId: string; app
         metadata: {
           candidateId: params.candidateId,
           applicationId: params.applicationId ?? null,
+          offerId: params.offerId ?? null,
           documentType: params.documentType,
           detectedMimeType: detected.mime,
           fileSize: data.length,

@@ -608,3 +608,11 @@ Public routes: `/careers`, `/careers/[slug]`, `/careers/[slug]/apply`. Public ap
 Public applications reuse the existing candidate/application lifecycle and Phase 2.3 private document storage. Resume files remain private; the existing malware scanner abstraction is preserved, so `scanner_unavailable` is not treated as clean. The current abuse-control implementation uses SQLite-backed, HMAC-keyed IP/email rate-limit records and a server-validated honeypot/minimum-submission-time check. This is suitable for the current single-instance architecture; distributed rate limiting should be introduced before horizontal multi-instance deployment.
 
 Public application history/activity is attributed to the requisition creator because the existing ATS history/activity schema requires a tenant-local user actor. Audit records remain internal and contain no applicant PII.
+
+## Phase 2.5 — Offers & Offer Management (`v0.14.0-alpha`)
+
+Phase 2.5 adds a tenant-scoped offer workflow directly on ATS applications. Offers use integer minor-unit compensation, controlled server/database lifecycle transitions, HR/Admin approval with creator separation, immutable approved/sent terms, versioned replacements, secure single-use candidate response tokens, request-time expiration, private offer documents through the Phase 2.3 storage layer, and an existing-application `hired` handoff for future onboarding.
+
+Candidate response links are bearer credentials and are stored only as SHA-256 hashes. The current repository has no production email provider, so marking an offer `sent` does not claim email delivery; the internal UI exposes the generated response link for controlled delivery. Offer letters are generated as real text documents from persisted offer data and stored through private document storage; scanner-unavailable documents remain non-clean/pending according to the existing document lifecycle.
+
+Money is stored as integer minor units. Currency formatting uses the currency's ISO fraction precision at presentation time. Historical migrations `0000` through `0008` are not modified; Phase 2.5 is additive migration `0009_phase2_5_offer_management.sql`.

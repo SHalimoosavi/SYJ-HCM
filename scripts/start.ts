@@ -48,9 +48,15 @@ try {
     fail(`Pending migrations: ${pending.join(', ')}. Run npm run db:migrate before npm start.`);
   }
 
-  const requiredTables = ['organizations', 'users', 'sessions', 'login_rate_limits', 'employees', 'departments', 'leave_types', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs', 'organization_settings', 'platform_administrators', 'platform_audit_logs', 'job_requisitions', 'candidates', 'applications', 'application_history', 'recruitment_stages', 'interview_rounds', 'interviews', 'interview_participants', 'interview_feedback', 'interview_feedback_corrections', 'interview_decisions', 'candidate_notes', 'candidate_activities', 'candidate_documents', 'job_publications', 'public_application_rate_limits'];
+  const requiredTables = ['organizations', 'users', 'sessions', 'login_rate_limits', 'employees', 'departments', 'leave_types', 'leave_requests', 'leave_balances', 'attendance_records', 'audit_logs', 'organization_settings', 'platform_administrators', 'platform_audit_logs', 'job_requisitions', 'candidates', 'applications', 'application_history', 'recruitment_stages', 'interview_rounds', 'interviews', 'interview_participants', 'interview_feedback', 'interview_feedback_corrections', 'interview_decisions', 'candidate_notes', 'candidate_activities', 'candidate_documents', 'job_publications', 'public_application_rate_limits', 'offers', 'offer_history', 'offer_response_rate_limits'];
   const missingConfiguration = db.prepare(`SELECT count(*) AS count FROM organizations o LEFT JOIN organization_settings s ON s.organization_id = o.id WHERE s.organization_id IS NULL`).get() as { count: number };
   if (Number(missingConfiguration.count) > 0) fail('Organization configuration is missing for one or more tenants. Run npm run db:migrate.');
+
+  const requiredColumns = [{ table: 'candidate_documents', column: 'offer_id' }];
+  for (const column of requiredColumns) {
+    const exists = db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ? LIMIT 1`).get(column.table, column.column);
+    if (!exists) fail(`Required database column is missing: ${column.table}.${column.column}. Run npm run db:migrate.`);
+  }
 
   for (const table of requiredTables) {
     const exists = db

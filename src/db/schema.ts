@@ -473,6 +473,7 @@ export const organizationsRelations = relations(organizations, ({ one, many }) =
   applications: many(applications),
   applicationHistory: many(applicationHistory),
   publicJobPublications: many(jobPublications),
+  offers: many(offers),
   settings: one(organizationSettings, { fields: [organizations.id], references: [organizationSettings.organizationId] })
 }));
 
@@ -513,7 +514,8 @@ export const applicationsRelations = relations(applications, ({ one, many }) => 
   organization: one(organizations, { fields: [applications.organizationId], references: [organizations.id] }),
   candidate: one(candidates, { fields: [applications.candidateId], references: [candidates.id] }),
   requisition: one(jobRequisitions, { fields: [applications.requisitionId], references: [jobRequisitions.id] }),
-  history: many(applicationHistory)
+  history: many(applicationHistory),
+  offers: many(offers)
 }));
 
 export const applicationHistoryRelations = relations(applicationHistory, ({ one }) => ({
@@ -558,6 +560,9 @@ export type CandidateNote = typeof candidateNotes.$inferSelect;
 export type CandidateActivity = typeof candidateActivities.$inferSelect;
 export type JobPublication = typeof jobPublications.$inferSelect;
 export type PublicApplicationRateLimit = typeof publicApplicationRateLimits.$inferSelect;
+export type Offer = typeof offers.$inferSelect;
+export type OfferHistory = typeof offerHistory.$inferSelect;
+export type OfferResponseRateLimit = typeof offerResponseRateLimits.$inferSelect;
 
 
 // ---------------------------------------------------------------------------
@@ -617,6 +622,96 @@ export const publicApplicationRateLimits = sqliteTable(
   })
 );
 
+export const offers = sqliteTable(
+  'offers',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    applicationId: text('application_id').notNull(),
+    offerReference: text('offer_reference').notNull(),
+    version: integer('version').notNull().default(1),
+    status: text('status', { enum: ['draft','pending_approval','rejected','approved','sent','accepted','declined','expired','withdrawn','replaced'] }).notNull().default('draft'),
+    supersedesOfferId: text('supersedes_offer_id'),
+    createdBy: text('created_by').notNull(),
+    approvedBy: text('approved_by'),
+    approvedAt: text('approved_at'),
+    rejectionReason: text('rejection_reason'),
+    sentAt: text('sent_at'),
+    expiresAt: text('expires_at'),
+    respondedAt: text('responded_at'),
+    responseReason: text('response_reason'),
+    proposedJoiningDate: text('proposed_joining_date'),
+    currency: text('currency').notNull().default('INR'),
+    baseSalaryMinor: integer('base_salary_minor').notNull(),
+    payFrequency: text('pay_frequency', { enum: ['hourly','weekly','monthly','annual'] }).notNull().default('annual'),
+    variableCompMinor: integer('variable_comp_minor').notNull().default(0),
+    joiningBonusMinor: integer('joining_bonus_minor').notNull().default(0),
+    allowancesMinor: integer('allowances_minor').notNull().default(0),
+    otherCompMinor: integer('other_comp_minor').notNull().default(0),
+    benefitsSummary: text('benefits_summary'),
+    employmentTerms: text('employment_terms'),
+    candidateResponseTokenHash: text('candidate_response_token_hash'),
+    candidateResponseTokenExpiresAt: text('candidate_response_token_expires_at'),
+    candidateResponseTokenRevokedAt: text('candidate_response_token_revoked_at'),
+    candidateResponseTokenUsedAt: text('candidate_response_token_used_at'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    referenceIdx: uniqueIndex('offers_reference_idx').on(t.offerReference),
+    organizationIdx: index('offers_organization_idx').on(t.organizationId, t.createdAt),
+    applicationIdx: index('offers_application_idx').on(t.organizationId, t.applicationId, t.createdAt),
+    statusIdx: index('offers_status_idx').on(t.organizationId, t.status, t.updatedAt),
+    expiresIdx: index('offers_expires_idx').on(t.organizationId, t.expiresAt),
+    creatorIdx: index('offers_creator_idx').on(t.organizationId, t.createdBy, t.createdAt),
+    responseTokenIdx: uniqueIndex('offers_response_token_hash_idx').on(t.candidateResponseTokenHash),
+    organizationIdIdIdx: uniqueIndex('offers_organization_id_idx').on(t.organizationId, t.id),
+    organizationIdIdApplicationIdx: uniqueIndex('offers_organization_id_id_application_idx').on(t.organizationId, t.id, t.applicationId),
+    applicationFk: foreignKey({ columns: [t.organizationId, t.applicationId], foreignColumns: [applications.organizationId, applications.id], name: 'offers_application_tenant_fk' }),
+    creatorFk: foreignKey({ columns: [t.organizationId, t.createdBy], foreignColumns: [users.organizationId, users.id], name: 'offers_creator_tenant_fk' }),
+    approverFk: foreignKey({ columns: [t.organizationId, t.approvedBy], foreignColumns: [users.organizationId, users.id], name: 'offers_approver_tenant_fk' }),
+    supersedesFk: foreignKey({ columns: [t.organizationId, t.supersedesOfferId], foreignColumns: [t.organizationId, t.id], name: 'offers_supersedes_tenant_fk' })
+  })
+);
+
+export const offerHistory = sqliteTable(
+  'offer_history',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    offerId: text('offer_id').notNull(),
+    action: text('action').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status'),
+    actorUserId: text('actor_user_id'),
+    metadata: text('metadata'),
+    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    offerIdx: index('offer_history_offer_idx').on(t.organizationId, t.offerId, t.createdAt),
+    actorIdx: index('offer_history_actor_idx').on(t.organizationId, t.actorUserId),
+    organizationIdIdIdx: uniqueIndex('offer_history_organization_id_idx').on(t.organizationId, t.id),
+    offerFk: foreignKey({ columns: [t.organizationId, t.offerId], foreignColumns: [offers.organizationId, offers.id], name: 'offer_history_offer_tenant_fk' }),
+    actorFk: foreignKey({ columns: [t.organizationId, t.actorUserId], foreignColumns: [users.organizationId, users.id], name: 'offer_history_actor_tenant_fk' })
+  })
+);
+
+export const offerResponseRateLimits = sqliteTable(
+  'offer_response_rate_limits',
+  {
+    key: text('key').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
+    offerId: text('offer_id').notNull(),
+    requestCount: integer('request_count').notNull().default(0),
+    windowStartedAt: text('window_started_at').notNull(),
+    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  },
+  (t) => ({
+    offerIdx: index('offer_response_rate_limits_offer_idx').on(t.organizationId, t.offerId, t.updatedAt),
+    offerFk: foreignKey({ columns: [t.organizationId, t.offerId], foreignColumns: [offers.organizationId, offers.id], name: 'offer_response_rate_limits_offer_tenant_fk' })
+  })
+);
+
 export const candidateDocuments = sqliteTable(
   'candidate_documents',
   {
@@ -624,6 +719,7 @@ export const candidateDocuments = sqliteTable(
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     candidateId: text('candidate_id').notNull(),
     applicationId: text('application_id'),
+    offerId: text('offer_id'),
     documentType: text('document_type', { enum: ['resume','cover_letter','certificate','portfolio','other'] }).notNull(),
     originalFilename: text('original_filename').notNull(),
     sanitizedFilename: text('sanitized_filename').notNull(),
@@ -648,6 +744,7 @@ export const candidateDocuments = sqliteTable(
     organizationIdx: index('candidate_documents_organization_idx').on(t.organizationId),
     candidateIdx: index('candidate_documents_candidate_idx').on(t.organizationId,t.candidateId,t.createdAt),
     applicationIdx: index('candidate_documents_application_idx').on(t.organizationId,t.applicationId,t.createdAt),
+    offerIdx: index('candidate_documents_offer_idx').on(t.organizationId,t.offerId,t.createdAt),
     typeIdx: index('candidate_documents_type_idx').on(t.organizationId,t.documentType,t.createdAt),
     statusIdx: index('candidate_documents_status_idx').on(t.organizationId,t.lifecycleStatus,t.scanStatus),
     createdIdx: index('candidate_documents_created_idx').on(t.organizationId,t.createdAt),

@@ -12,7 +12,7 @@ const baseLinks: NavLink[] = [
   { href: '/profile', label: 'My Profile' }
 ];
 
-const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }, { href: '/recruitment', label: 'Recruitment' }];
+const hrLinks: NavLink[] = [{ href: '/employees', label: 'Employees' }, { href: '/recruitment', label: 'Recruitment' }, { href: '/recruitment/offers', label: 'Offers' }];
 const employeeLinks: NavLink[] = [{ href: '/recruitment/interviews', label: 'My Interviews' }];
 const adminLinks: NavLink[] = [{ href: '/organization', label: 'Organization' }];
 
