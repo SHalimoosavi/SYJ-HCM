@@ -1,55 +1,55 @@
-import { DatabaseSync } from 'node:sqlite';
+﻿import postgres from 'postgres';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const dbPath = process.env.DATABASE_PATH || './data/syj-hcm.db';
-const resolvedPath = path.resolve(process.cwd(), dbPath);
-fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+async function main() {
+  const databaseUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL must be configured.');
 
-const migrationsDir = path.resolve(process.cwd(), 'drizzle');
-const files = fs
-  .readdirSync(migrationsDir)
-  .filter((f) => f.endsWith('.sql'))
-  .sort();
+  const runtimeRole = process.env.DATABASE_RUNTIME_ROLE || 'app_runtime';
+  const migrationsDir = path.resolve(process.cwd(), 'drizzle/postgres');
+  const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')).sort();
+  if (files.length === 0) throw new Error(`No PostgreSQL migrations found in ${migrationsDir}.`);
 
-const db = new DatabaseSync(resolvedPath);
-db.exec('PRAGMA foreign_keys = ON;');
-db.exec('PRAGMA busy_timeout = 5000;');
+  const db = postgres(databaseUrl, { max: 1, connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT || 10) });
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS __migrations (
-    name TEXT PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (current_timestamp)
-  );
-`);
+  try {
+    await db`SELECT set_config('app.runtime_role', ${runtimeRole}, false)`;
+    await db`
+      CREATE TABLE IF NOT EXISTS __migrations (
+        name text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `;
 
-try {
-  for (const file of files) {
-    const applied = db.prepare('SELECT 1 FROM __migrations WHERE name = ? LIMIT 1').get(file);
-    if (applied) {
-      console.log(`skip (already applied): ${file}`);
-      continue;
+    for (const file of files) {
+      const migrationSql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+
+      await db.begin(async (tx) => {
+        // Serialize migration runners and re-check the ledger AFTER
+        // acquiring the transaction-scoped advisory lock. This prevents
+        // concurrent runners from applying the same migration twice.
+        await tx`SELECT pg_advisory_xact_lock(hashtext('syj-hcm-schema-migration'))`;
+
+        const applied = await tx`SELECT 1 FROM __migrations WHERE name = ${file} LIMIT 1`;
+        if (applied.length > 0) {
+          console.log(`already applied: ${file}`);
+          return;
+        }
+
+        console.log(`applying: ${file}`);
+        await tx.unsafe(migrationSql);
+        await tx`INSERT INTO __migrations (name) VALUES (${file})`;
+      });
     }
 
-    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
-    console.log(`applying: ${file}`);
-
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      db.exec(sql);
-      db.prepare('INSERT INTO __migrations (name) VALUES (?)').run(file);
-      db.exec('COMMIT');
-    } catch (error) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Preserve the original migration error.
-      }
-      throw error;
-    }
+    console.log(`Migrations complete. Applied/verified ${files.length} PostgreSQL migration files.`);
+  } finally {
+    await db.end({ timeout: 5 });
   }
-
-  console.log('Migrations complete.');
-} finally {
-  db.close();
 }
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

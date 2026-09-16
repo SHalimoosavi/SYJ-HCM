@@ -1,65 +1,51 @@
-import { DatabaseSync } from 'node:sqlite';
-import { drizzle } from 'drizzle-orm/sqlite-proxy';
-import path from 'node:path';
-import fs from 'node:fs';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { sql as drizzleSql, type SQL } from 'drizzle-orm';
 
-const dbPath = process.env.DATABASE_PATH || './data/syj-hcm.db';
-const resolvedPath = path.resolve(process.cwd(), dbPath);
-fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-
-export const sqlite = new DatabaseSync(resolvedPath);
-sqlite.exec('PRAGMA journal_mode = WAL;');
-sqlite.exec('PRAGMA foreign_keys = ON;');
-sqlite.exec('PRAGMA busy_timeout = 5000;');
-
-type ProxyMethod = 'run' | 'all' | 'get' | 'values';
-
-export const db = drizzle(async (sql: string, params: unknown[], method: ProxyMethod) => {
-  try {
-    const stmt = sqlite.prepare(sql);
-    stmt.setReturnArrays(true);
-    switch (method) {
-      case 'all':
-      case 'values': {
-        const rows = stmt.all(...(params as any[])) as unknown as unknown[][];
-        return { rows: rows as unknown[] };
-      }
-      case 'get': {
-        const row = stmt.get(...(params as any[])) as unknown[] | undefined;
-        return { rows: row ?? [] };
-      }
-      case 'run':
-      default: {
-        stmt.run(...(params as any[]));
-        return { rows: [] };
-      }
-    }
-  } catch (err) {
-    console.error('node:sqlite proxy query failed:', { sql, params, method }, err);
-    throw err;
-  }
-});
-
-/**
- * Executes a short, fully synchronous SQLite transaction. The callback must
- * not await or perform network work. Keeping the callback synchronous means
- * another request cannot accidentally interleave its statements into this
- * transaction on the single DatabaseSync connection.
- */
-export function withSqliteTransactionSync<T>(callback: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = callback();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // Preserve the original application error if rollback itself fails.
-    }
-    throw error;
-  }
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL must be configured for PostgreSQL.');
 }
 
+/** Raw postgres.js tagged-template client. Use this for faithful raw SQL paths. */
+export const sql = postgres(databaseUrl, {
+  max: Number(process.env.DATABASE_POOL_MAX || 10),
+  idle_timeout: Number(process.env.DATABASE_IDLE_TIMEOUT || 20),
+  connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT || 10)
+});
+
+/** Drizzle PostgreSQL instance backed by the same postgres.js pool. */
+export const db = drizzle(sql);
+
 export type Db = typeof db;
+export type DbTransaction = Pick<Db, 'insert'> & { execute: (query: SQL) => Promise<unknown> };
+
+/**
+ * Set the tenant context for the lifetime of the current PostgreSQL
+ * transaction. The value is never persisted on the pooled connection.
+ */
+export async function setTenantContext(tx: { execute: (query: SQL) => Promise<unknown> }, organizationId: string): Promise<void> {
+  if (!organizationId) throw new Error('Authenticated user is missing organization context.');
+  await tx.execute(drizzleSql`select set_config('app.current_org_id', ${organizationId}, true)`);
+}
+
+
+/**
+ * Temporary compile-time compatibility surface for Prompt B. It contains no
+ * SQLite implementation and deliberately fails if an unmigrated legacy path
+ * attempts to execute. Remove these exports once the remaining application
+ * raw SQL call sites are migrated to PostgreSQL.
+ */
+type LegacyStatement = { run: (...args: unknown[]) => { changes: number }; get: (...args: unknown[]) => any; all: (...args: unknown[]) => any[] };
+export const sqlite = {
+  prepare(_query: string): LegacyStatement { throw new Error('SQLite runtime access has been removed; migrate this call site to PostgreSQL.'); },
+  exec(_query: string): void { throw new Error('SQLite runtime access has been removed; migrate this call site to PostgreSQL.'); }
+};
+
+export function withSqliteTransactionSync<T>(_callback: () => T): T {
+  throw new Error('SQLite synchronous transactions have been removed; migrate this call site to db.transaction(async ...).');
+}
+
+export async function closeDatabase(): Promise<void> {
+  await sql.end({ timeout: 5 });
+}

@@ -1,10 +1,14 @@
 import { defineConfig } from 'drizzle-kit';
 
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL must be configured for PostgreSQL.');
+}
+
 export default defineConfig({
   schema: './src/db/schema.ts',
-  out: './drizzle',
-  dialect: 'sqlite',
+  out: './drizzle/postgres',
+  dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_PATH || './data/syj-hcm.db'
+    url: process.env.DATABASE_URL
   }
 });

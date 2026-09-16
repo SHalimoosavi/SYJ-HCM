@@ -1,19 +1,19 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex, foreignKey } from 'drizzle-orm/sqlite-core';
-import { relations, sql } from 'drizzle-orm';
+import { pgTable, text, integer, doublePrecision, boolean, index, uniqueIndex, foreignKey, timestamp } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
 // Organizations / tenant root
 // ---------------------------------------------------------------------------
 
-export const organizations = sqliteTable(
+export const organizations = pgTable(
   'organizations',
   {
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     status: text('status', { enum: ['active', 'suspended'] }).notNull().default('active'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     slugIdx: uniqueIndex('organizations_slug_idx').on(t.slug)
@@ -24,7 +24,7 @@ export const organizations = sqliteTable(
 // Core reference tables
 // ---------------------------------------------------------------------------
 
-export const organizationSettings = sqliteTable(
+export const organizationSettings = pgTable(
   'organization_settings',
   {
     organizationId: text('organization_id').primaryKey().references(() => organizations.id, { onDelete: 'restrict' }),
@@ -32,19 +32,19 @@ export const organizationSettings = sqliteTable(
     locale: text('locale').notNull().default('en-IN'),
     dateFormat: text('date_format').notNull().default('YYYY-MM-DD'),
     weekStartDay: integer('week_start_day').notNull().default(1),
-    publicCareersEnabled: integer('public_careers_enabled', { mode: 'boolean' }).notNull().default(false),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    publicCareersEnabled: boolean('public_careers_enabled').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   }
 );
 
-export const departments = sqliteTable(
+export const departments = pgTable(
   'departments',
   {
     id: text('id').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     organizationIdx: index('departments_organization_idx').on(t.organizationId),
@@ -56,7 +56,7 @@ export const departments = sqliteTable(
 // Auth: users, roles, sessions
 // ---------------------------------------------------------------------------
 
-export const users = sqliteTable(
+export const users = pgTable(
   'users',
   {
     id: text('id').primaryKey(),
@@ -66,9 +66,9 @@ export const users = sqliteTable(
     passwordSalt: text('password_salt').notNull(),
     role: text('role', { enum: ['admin', 'hr', 'employee'] }).notNull().default('employee'),
     employeeId: text('employee_id').references(() => employees.id, { onDelete: 'set null' }),
-    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     emailIdx: uniqueIndex('users_email_idx').on(t.email),
@@ -77,15 +77,15 @@ export const users = sqliteTable(
   })
 );
 
-export const sessions = sqliteTable(
+export const sessions = pgTable(
   'sessions',
   {
     id: text('id').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    expiresAt: text('expires_at').notNull(),
-    lastActiveAt: text('last_active_at').notNull().default(sql`(current_timestamp)`),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
+    lastActiveAt: timestamp('last_active_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     userIdx: index('sessions_user_idx').on(t.organizationId, t.userId),
@@ -93,15 +93,15 @@ export const sessions = sqliteTable(
   })
 );
 
-export const loginRateLimits = sqliteTable(
+export const loginRateLimits = pgTable(
   'login_rate_limits',
   {
     key: text('key').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     failedAttempts: integer('failed_attempts').notNull().default(0),
-    windowStartedAt: text('window_started_at').notNull(),
-    lockedUntil: text('locked_until'),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true, mode: 'string' }).notNull(),
+    lockedUntil: timestamp('locked_until', { withTimezone: true, mode: 'string' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     organizationIdx: index('login_rate_limits_organization_idx').on(t.organizationId),
@@ -109,15 +109,15 @@ export const loginRateLimits = sqliteTable(
   })
 );
 
-export const platformAdministrators = sqliteTable(
+export const platformAdministrators = pgTable(
   'platform_administrators',
   {
     userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'restrict' }),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   }
 );
 
-export const platformAuditLogs = sqliteTable(
+export const platformAuditLogs = pgTable(
   'platform_audit_logs',
   {
     id: text('id').primaryKey(),
@@ -126,7 +126,7 @@ export const platformAuditLogs = sqliteTable(
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),
     metadata: text('metadata'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     entityIdx: index('platform_audit_entity_idx').on(t.entityType, t.entityId),
@@ -138,7 +138,7 @@ export const platformAuditLogs = sqliteTable(
 // Employees
 // ---------------------------------------------------------------------------
 
-export const employees = sqliteTable(
+export const employees = pgTable(
   'employees',
   {
     id: text('id').primaryKey(),
@@ -162,8 +162,8 @@ export const employees = sqliteTable(
     address: text('address'),
     emergencyContactName: text('emergency_contact_name'),
     emergencyContactPhone: text('emergency_contact_phone'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     codeIdx: uniqueIndex('employees_code_idx').on(t.organizationId, t.employeeCode),
@@ -178,7 +178,7 @@ export const employees = sqliteTable(
 // Recruitment / ATS
 // ---------------------------------------------------------------------------
 
-export const jobRequisitions = sqliteTable(
+export const jobRequisitions = pgTable(
   'job_requisitions',
   {
     id: text('id').primaryKey(),
@@ -191,8 +191,8 @@ export const jobRequisitions = sqliteTable(
     description: text('description').notNull(),
     requirements: text('requirements').notNull(),
     skills: text('skills'),
-    salaryMin: real('salary_min'),
-    salaryMax: real('salary_max'),
+    salaryMin: doublePrecision('salary_min'),
+    salaryMax: doublePrecision('salary_max'),
     currency: text('currency').notNull().default('INR'),
     openings: integer('openings').notNull().default(1),
     hiringManagerEmployeeId: text('hiring_manager_employee_id'),
@@ -201,8 +201,8 @@ export const jobRequisitions = sqliteTable(
     openingDate: text('opening_date'),
     closingDate: text('closing_date'),
     createdBy: text('created_by').notNull(),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     codeIdx: uniqueIndex('job_requisitions_code_idx').on(t.organizationId, t.requisitionCode),
@@ -219,7 +219,7 @@ export const jobRequisitions = sqliteTable(
   })
 );
 
-export const candidates = sqliteTable(
+export const candidates = pgTable(
   'candidates',
   {
     id: text('id').primaryKey(),
@@ -233,8 +233,8 @@ export const candidates = sqliteTable(
     summary: text('summary'),
     source: text('source'),
     createdBy: text('created_by').notNull(),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     emailIdx: uniqueIndex('candidates_email_idx').on(t.organizationId, t.email),
@@ -245,7 +245,7 @@ export const candidates = sqliteTable(
   })
 );
 
-export const applications = sqliteTable(
+export const applications = pgTable(
   'applications',
   {
     id: text('id').primaryKey(),
@@ -254,13 +254,13 @@ export const applications = sqliteTable(
     requisitionId: text('requisition_id').notNull(),
     applicationReference: text('application_reference').notNull(),
     status: text('status', { enum: ['applied', 'screening', 'shortlisted', 'interview', 'evaluation', 'offer', 'hired', 'rejected', 'withdrawn', 'archived'] }).notNull().default('applied'),
-    appliedAt: text('applied_at').notNull().default(sql`(current_timestamp)`),
+    appliedAt: timestamp('applied_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
     source: text('source'),
     currentStage: text('current_stage').notNull().default('applied'),
     notes: text('notes'),
     publicCoverLetter: text('public_cover_letter'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     referenceIdx: uniqueIndex('applications_reference_idx').on(t.organizationId, t.applicationReference),
@@ -275,7 +275,7 @@ export const applications = sqliteTable(
   })
 );
 
-export const applicationHistory = sqliteTable(
+export const applicationHistory = pgTable(
   'application_history',
   {
     id: text('id').primaryKey(),
@@ -288,7 +288,7 @@ export const applicationHistory = sqliteTable(
     note: text('note'),
     actorUserId: text('actor_user_id').notNull(),
     reason: text('reason'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     applicationIdx: index('application_history_application_idx').on(t.organizationId, t.applicationId, t.createdAt),
@@ -302,65 +302,65 @@ export const applicationHistory = sqliteTable(
 // Phase 2.2 recruitment workflow / interviews
 // ---------------------------------------------------------------------------
 
-export const recruitmentStages = sqliteTable('recruitment_stages', {
+export const recruitmentStages = pgTable('recruitment_stages', {
   id: text('id').primaryKey(), organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
   statusKey: text('status_key', { enum: ['applied','screening','shortlisted','interview','evaluation','offer','hired','rejected','withdrawn','archived'] }).notNull(),
-  name: text('name').notNull(), position: integer('position').notNull(), isActive: integer('is_active',{mode:'boolean'}).notNull().default(true),
-  createdBy: text('created_by').notNull(), updatedBy: text('updated_by').notNull(), createdAt: text('created_at').notNull().default(sql`(current_timestamp)`), updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+  name: text('name').notNull(), position: integer('position').notNull(), isActive: boolean('is_active').notNull().default(true),
+  createdBy: text('created_by').notNull(), updatedBy: text('updated_by').notNull(), createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t) => ({ statusIdx: uniqueIndex('recruitment_stages_status_idx').on(t.organizationId,t.statusKey), organizationIdIdIdx: uniqueIndex('recruitment_stages_organization_id_idx').on(t.organizationId,t.id), creatorFk: foreignKey({columns:[t.organizationId,t.createdBy],foreignColumns:[users.organizationId,users.id],name:'recruitment_stages_creator_tenant_fk'}), updaterFk: foreignKey({columns:[t.organizationId,t.updatedBy],foreignColumns:[users.organizationId,users.id],name:'recruitment_stages_updater_tenant_fk'}) }));
 
-export const interviewRounds = sqliteTable('interview_rounds', {
-  id: text('id').primaryKey(), organizationId: text('organization_id').notNull().references(() => organizations.id,{onDelete:'restrict'}), applicationId: text('application_id').notNull(), roundNumber: integer('round_number').notNull(), name: text('name').notNull(), stageStatus: text('stage_status',{enum:['screening','shortlisted','interview','evaluation','offer']}).notNull().default('interview'), createdBy: text('created_by').notNull(), createdAt: text('created_at').notNull().default(sql`(current_timestamp)`), updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+export const interviewRounds = pgTable('interview_rounds', {
+  id: text('id').primaryKey(), organizationId: text('organization_id').notNull().references(() => organizations.id,{onDelete:'restrict'}), applicationId: text('application_id').notNull(), roundNumber: integer('round_number').notNull(), name: text('name').notNull(), stageStatus: text('stage_status',{enum:['screening','shortlisted','interview','evaluation','offer']}).notNull().default('interview'), createdBy: text('created_by').notNull(), createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t) => ({ uniqueRound: uniqueIndex('interview_rounds_unique_idx').on(t.organizationId,t.applicationId,t.roundNumber), organizationIdIdIdx: uniqueIndex('interview_rounds_organization_id_idx').on(t.organizationId,t.id), organizationIdIdApplicationIdx: uniqueIndex('interview_rounds_organization_id_id_application_idx').on(t.organizationId,t.id,t.applicationId), applicationFk: foreignKey({columns:[t.organizationId,t.applicationId],foreignColumns:[applications.organizationId,applications.id],name:'interview_rounds_application_tenant_fk'}), creatorFk: foreignKey({columns:[t.organizationId,t.createdBy],foreignColumns:[users.organizationId,users.id],name:'interview_rounds_creator_tenant_fk'}) }));
 
-export const interviews = sqliteTable('interviews', {
-  id: text('id').primaryKey(), organizationId: text('organization_id').notNull().references(() => organizations.id,{onDelete:'restrict'}), applicationId: text('application_id').notNull(), roundId: text('round_id').notNull(), title: text('title').notNull(), interviewType: text('interview_type').notNull(), status: text('status',{enum:['scheduled','confirmed','completed','cancelled','rescheduled','no_show']}).notNull().default('scheduled'), scheduledStart: text('scheduled_start').notNull(), scheduledEnd: text('scheduled_end').notNull(), timezone: text('timezone').notNull(), location: text('location'), meetingDetails: text('meeting_details'), organizerUserId: text('organizer_user_id').notNull(), createdBy: text('created_by').notNull(), createdAt: text('created_at').notNull().default(sql`(current_timestamp)`), updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+export const interviews = pgTable('interviews', {
+  id: text('id').primaryKey(), organizationId: text('organization_id').notNull().references(() => organizations.id,{onDelete:'restrict'}), applicationId: text('application_id').notNull(), roundId: text('round_id').notNull(), title: text('title').notNull(), interviewType: text('interview_type').notNull(), status: text('status',{enum:['scheduled','confirmed','completed','cancelled','rescheduled','no_show']}).notNull().default('scheduled'), scheduledStart: timestamp('scheduled_start', { withTimezone: true, mode: 'string' }).notNull(), scheduledEnd: timestamp('scheduled_end', { withTimezone: true, mode: 'string' }).notNull(), timezone: text('timezone').notNull(), location: text('location'), meetingDetails: text('meeting_details'), organizerUserId: text('organizer_user_id').notNull(), createdBy: text('created_by').notNull(), createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t) => ({ organizationIdIdIdx: uniqueIndex('interviews_organization_id_idx').on(t.organizationId,t.id), organizationIdIdApplicationIdx: uniqueIndex('interviews_organization_id_id_application_idx').on(t.organizationId,t.id,t.applicationId), applicationIdx: index('interviews_application_idx').on(t.organizationId,t.applicationId,t.scheduledStart), statusStartIdx: index('interviews_status_start_idx').on(t.organizationId,t.status,t.scheduledStart), roundIdx: index('interviews_round_idx').on(t.organizationId,t.roundId), applicationFk: foreignKey({columns:[t.organizationId,t.applicationId],foreignColumns:[applications.organizationId,applications.id],name:'interviews_application_tenant_fk'}), roundFk: foreignKey({columns:[t.organizationId,t.roundId,t.applicationId],foreignColumns:[interviewRounds.organizationId,interviewRounds.id,interviewRounds.applicationId],name:'interviews_round_tenant_fk'}), organizerFk: foreignKey({columns:[t.organizationId,t.organizerUserId],foreignColumns:[users.organizationId,users.id],name:'interviews_organizer_tenant_fk'}), creatorFk: foreignKey({columns:[t.organizationId,t.createdBy],foreignColumns:[users.organizationId,users.id],name:'interviews_creator_tenant_fk'}) }));
 
-export const interviewParticipants = sqliteTable('interview_participants', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), userId:text('user_id').notNull(), role:text('role',{enum:['interviewer','observer']}).notNull().default('interviewer'), assignedBy:text('assigned_by').notNull(), createdAt:text('created_at').notNull().default(sql`(current_timestamp)`)
+export const interviewParticipants = pgTable('interview_participants', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), userId:text('user_id').notNull(), role:text('role',{enum:['interviewer','observer']}).notNull().default('interviewer'), assignedBy:text('assigned_by').notNull(), createdAt:timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ uniqueParticipant:uniqueIndex('interview_participants_unique_idx').on(t.organizationId,t.interviewId,t.userId), organizationIdIdIdx:uniqueIndex('interview_participants_organization_id_idx').on(t.organizationId,t.id), interviewFk:foreignKey({columns:[t.organizationId,t.interviewId],foreignColumns:[interviews.organizationId,interviews.id],name:'interview_participants_interview_tenant_fk'}), userFk:foreignKey({columns:[t.organizationId,t.userId],foreignColumns:[users.organizationId,users.id],name:'interview_participants_user_tenant_fk'}), assignerFk:foreignKey({columns:[t.organizationId,t.assignedBy],foreignColumns:[users.organizationId,users.id],name:'interview_participants_assigner_tenant_fk'}), userIdx:index('interview_participants_user_idx').on(t.organizationId,t.userId,t.interviewId) }));
 
-export const interviewFeedback = sqliteTable('interview_feedback', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), interviewerUserId:text('interviewer_user_id').notNull(), score:integer('score').notNull(), recommendation:text('recommendation',{enum:['strong_yes','yes','neutral','no','strong_no']}).notNull(), strengths:text('strengths').notNull(), concerns:text('concerns').notNull(), notes:text('notes'), submittedAt:text('submitted_at').notNull().default(sql`(current_timestamp)`)
+export const interviewFeedback = pgTable('interview_feedback', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), interviewerUserId:text('interviewer_user_id').notNull(), score:integer('score').notNull(), recommendation:text('recommendation',{enum:['strong_yes','yes','neutral','no','strong_no']}).notNull(), strengths:text('strengths').notNull(), concerns:text('concerns').notNull(), notes:text('notes'), submittedAt:timestamp('submitted_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ uniqueFeedback:uniqueIndex('interview_feedback_unique_idx').on(t.organizationId,t.interviewId,t.interviewerUserId), organizationIdIdIdx:uniqueIndex('interview_feedback_organization_id_idx').on(t.organizationId,t.id), interviewIdx:index('interview_feedback_interview_idx').on(t.organizationId,t.interviewId,t.submittedAt), interviewerIdx:index('interview_feedback_interviewer_idx').on(t.organizationId,t.interviewerUserId,t.submittedAt), interviewFk:foreignKey({columns:[t.organizationId,t.interviewId],foreignColumns:[interviews.organizationId,interviews.id],name:'interview_feedback_interview_tenant_fk'}), participantFk:foreignKey({columns:[t.organizationId,t.interviewId,t.interviewerUserId],foreignColumns:[interviewParticipants.organizationId,interviewParticipants.interviewId,interviewParticipants.userId],name:'interview_feedback_participant_tenant_fk'}), interviewerFk:foreignKey({columns:[t.organizationId,t.interviewerUserId],foreignColumns:[users.organizationId,users.id],name:'interview_feedback_interviewer_tenant_fk'}) }));
 
-export const interviewFeedbackCorrections = sqliteTable('interview_feedback_corrections', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), feedbackId:text('feedback_id').notNull(), previousScore:integer('previous_score').notNull(), previousRecommendation:text('previous_recommendation').notNull(), previousStrengths:text('previous_strengths').notNull(), previousConcerns:text('previous_concerns').notNull(), previousNotes:text('previous_notes'), newScore:integer('new_score').notNull(), newRecommendation:text('new_recommendation').notNull(), newStrengths:text('new_strengths').notNull(), newConcerns:text('new_concerns').notNull(), newNotes:text('new_notes'), correctedBy:text('corrected_by').notNull(), reason:text('reason').notNull(), createdAt:text('created_at').notNull().default(sql`(current_timestamp)`)
+export const interviewFeedbackCorrections = pgTable('interview_feedback_corrections', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), feedbackId:text('feedback_id').notNull(), previousScore:integer('previous_score').notNull(), previousRecommendation:text('previous_recommendation').notNull(), previousStrengths:text('previous_strengths').notNull(), previousConcerns:text('previous_concerns').notNull(), previousNotes:text('previous_notes'), newScore:integer('new_score').notNull(), newRecommendation:text('new_recommendation').notNull(), newStrengths:text('new_strengths').notNull(), newConcerns:text('new_concerns').notNull(), newNotes:text('new_notes'), correctedBy:text('corrected_by').notNull(), reason:text('reason').notNull(), createdAt:timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ organizationIdIdIdx:uniqueIndex('interview_feedback_corrections_organization_id_idx').on(t.organizationId,t.id), feedbackIdx:index('interview_feedback_corrections_feedback_idx').on(t.organizationId,t.feedbackId,t.createdAt), feedbackFk:foreignKey({columns:[t.organizationId,t.feedbackId],foreignColumns:[interviewFeedback.organizationId,interviewFeedback.id],name:'interview_feedback_corrections_feedback_tenant_fk'}), actorFk:foreignKey({columns:[t.organizationId,t.correctedBy],foreignColumns:[users.organizationId,users.id],name:'interview_feedback_corrections_actor_tenant_fk'}) }));
 
-export const interviewDecisions = sqliteTable('interview_decisions', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), applicationId:text('application_id').notNull(), outcome:text('outcome',{enum:['advance','hold','reject']}).notNull(), rationale:text('rationale').notNull(), decidedBy:text('decided_by').notNull(), createdAt:text('created_at').notNull().default(sql`(current_timestamp)`)
+export const interviewDecisions = pgTable('interview_decisions', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), interviewId:text('interview_id').notNull(), applicationId:text('application_id').notNull(), outcome:text('outcome',{enum:['advance','hold','reject']}).notNull(), rationale:text('rationale').notNull(), decidedBy:text('decided_by').notNull(), createdAt:timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ uniqueDecision:uniqueIndex('interview_decisions_unique_idx').on(t.organizationId,t.interviewId), organizationIdIdIdx:uniqueIndex('interview_decisions_organization_id_idx').on(t.organizationId,t.id), applicationIdx:index('interview_decisions_application_idx').on(t.organizationId,t.applicationId,t.createdAt), interviewApplicationFk:foreignKey({columns:[t.organizationId,t.interviewId,t.applicationId],foreignColumns:[interviews.organizationId,interviews.id,interviews.applicationId],name:'interview_decisions_interview_application_tenant_fk'}), interviewFk:foreignKey({columns:[t.organizationId,t.interviewId],foreignColumns:[interviews.organizationId,interviews.id],name:'interview_decisions_interview_tenant_fk'}), applicationFk:foreignKey({columns:[t.organizationId,t.applicationId],foreignColumns:[applications.organizationId,applications.id],name:'interview_decisions_application_tenant_fk'}), actorFk:foreignKey({columns:[t.organizationId,t.decidedBy],foreignColumns:[users.organizationId,users.id],name:'interview_decisions_actor_tenant_fk'}) }));
 
-export const candidateNotes = sqliteTable('candidate_notes', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), candidateId:text('candidate_id').notNull(), applicationId:text('application_id'), authorUserId:text('author_user_id').notNull(), content:text('content').notNull(), createdAt:text('created_at').notNull().default(sql`(current_timestamp)`), updatedAt:text('updated_at').notNull().default(sql`(current_timestamp)`)
+export const candidateNotes = pgTable('candidate_notes', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), candidateId:text('candidate_id').notNull(), applicationId:text('application_id'), authorUserId:text('author_user_id').notNull(), content:text('content').notNull(), createdAt:timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(), updatedAt:timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ organizationIdIdIdx:uniqueIndex('candidate_notes_organization_id_idx').on(t.organizationId,t.id), candidateIdx:index('candidate_notes_candidate_idx').on(t.organizationId,t.candidateId,t.createdAt), applicationIdx:index('candidate_notes_application_idx').on(t.organizationId,t.applicationId,t.createdAt), candidateFk:foreignKey({columns:[t.organizationId,t.candidateId],foreignColumns:[candidates.organizationId,candidates.id],name:'candidate_notes_candidate_tenant_fk'}), applicationFk:foreignKey({columns:[t.organizationId,t.applicationId,t.candidateId],foreignColumns:[applications.organizationId,applications.id,applications.candidateId],name:'candidate_notes_application_tenant_fk'}), authorFk:foreignKey({columns:[t.organizationId,t.authorUserId],foreignColumns:[users.organizationId,users.id],name:'candidate_notes_author_tenant_fk'}) }));
 
-export const candidateActivities = sqliteTable('candidate_activities', {
-  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), candidateId:text('candidate_id').notNull(), applicationId:text('application_id'), interviewId:text('interview_id'), activityType:text('activity_type').notNull(), actorUserId:text('actor_user_id').notNull(), summary:text('summary').notNull(), metadata:text('metadata'), createdAt:text('created_at').notNull().default(sql`(current_timestamp)`)
+export const candidateActivities = pgTable('candidate_activities', {
+  id:text('id').primaryKey(), organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'restrict'}), candidateId:text('candidate_id').notNull(), applicationId:text('application_id'), interviewId:text('interview_id'), activityType:text('activity_type').notNull(), actorUserId:text('actor_user_id').notNull(), summary:text('summary').notNull(), metadata:text('metadata'), createdAt:timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
 }, (t)=>({ organizationIdIdIdx:uniqueIndex('candidate_activities_organization_id_idx').on(t.organizationId,t.id), timelineIdx:index('candidate_activities_timeline_idx').on(t.organizationId,t.candidateId,t.createdAt,t.id), applicationIdx:index('candidate_activities_application_idx').on(t.organizationId,t.applicationId,t.createdAt), interviewIdx:index('candidate_activities_interview_idx').on(t.organizationId,t.interviewId,t.createdAt), candidateFk:foreignKey({columns:[t.organizationId,t.candidateId],foreignColumns:[candidates.organizationId,candidates.id],name:'candidate_activities_candidate_tenant_fk'}), applicationFk:foreignKey({columns:[t.organizationId,t.applicationId,t.candidateId],foreignColumns:[applications.organizationId,applications.id,applications.candidateId],name:'candidate_activities_application_tenant_fk'}), interviewFk:foreignKey({columns:[t.organizationId,t.interviewId,t.applicationId],foreignColumns:[interviews.organizationId,interviews.id,interviews.applicationId],name:'candidate_activities_interview_tenant_fk'}), actorFk:foreignKey({columns:[t.organizationId,t.actorUserId],foreignColumns:[users.organizationId,users.id],name:'candidate_activities_actor_tenant_fk'}) }));
 
 // ---------------------------------------------------------------------------
 // Leave management
 // ---------------------------------------------------------------------------
 
-export const leaveTypes = sqliteTable(
+export const leaveTypes = pgTable(
   'leave_types',
   {
     id: text('id').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
-    annualQuota: real('annual_quota').notNull(),
-    isPaid: integer('is_paid', { mode: 'boolean' }).notNull().default(true),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    annualQuota: doublePrecision('annual_quota').notNull(),
+    isPaid: boolean('is_paid').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     organizationIdx: index('leave_types_organization_idx').on(t.organizationId)
   })
 );
 
-export const leaveBalances = sqliteTable(
+export const leaveBalances = pgTable(
   'leave_balances',
   {
     id: text('id').primaryKey(),
@@ -368,9 +368,9 @@ export const leaveBalances = sqliteTable(
     employeeId: text('employee_id').notNull().references(() => employees.id, { onDelete: 'cascade' }),
     leaveTypeId: text('leave_type_id').notNull().references(() => leaveTypes.id, { onDelete: 'cascade' }),
     year: integer('year').notNull(),
-    allocated: real('allocated').notNull(),
-    used: real('used').notNull().default(0),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    allocated: doublePrecision('allocated').notNull(),
+    used: doublePrecision('used').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     uniquePerYear: uniqueIndex('leave_balances_unique').on(t.organizationId, t.employeeId, t.leaveTypeId, t.year),
@@ -378,7 +378,7 @@ export const leaveBalances = sqliteTable(
   })
 );
 
-export const leaveRequests = sqliteTable(
+export const leaveRequests = pgTable(
   'leave_requests',
   {
     id: text('id').primaryKey(),
@@ -387,16 +387,16 @@ export const leaveRequests = sqliteTable(
     leaveTypeId: text('leave_type_id').notNull().references(() => leaveTypes.id, { onDelete: 'restrict' }),
     startDate: text('start_date').notNull(),
     endDate: text('end_date').notNull(),
-    days: real('days').notNull(),
+    days: doublePrecision('days').notNull(),
     reason: text('reason'),
     status: text('status', { enum: ['pending', 'approved', 'rejected', 'cancelled'] })
       .notNull()
       .default('pending'),
     approverId: text('approver_id').references(() => users.id, { onDelete: 'set null' }),
-    approvedAt: text('approved_at'),
+    approvedAt: timestamp('approved_at', { withTimezone: true, mode: 'string' }),
     rejectionReason: text('rejection_reason'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     employeeIdx: index('leave_requests_employee_idx').on(t.organizationId, t.employeeId),
@@ -408,22 +408,22 @@ export const leaveRequests = sqliteTable(
 // Attendance
 // ---------------------------------------------------------------------------
 
-export const attendanceRecords = sqliteTable(
+export const attendanceRecords = pgTable(
   'attendance_records',
   {
     id: text('id').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     employeeId: text('employee_id').notNull().references(() => employees.id, { onDelete: 'cascade' }),
     workDate: text('work_date').notNull(),
-    clockInAt: text('clock_in_at'),
-    clockOutAt: text('clock_out_at'),
-    clockInLat: real('clock_in_lat'),
-    clockInLng: real('clock_in_lng'),
-    clockOutLat: real('clock_out_lat'),
-    clockOutLng: real('clock_out_lng'),
+    clockInAt: timestamp('clock_in_at', { withTimezone: true, mode: 'string' }),
+    clockOutAt: timestamp('clock_out_at', { withTimezone: true, mode: 'string' }),
+    clockInLat: doublePrecision('clock_in_lat'),
+    clockInLng: doublePrecision('clock_in_lng'),
+    clockOutLat: doublePrecision('clock_out_lat'),
+    clockOutLng: doublePrecision('clock_out_lng'),
     status: text('status', { enum: ['present', 'on_leave', 'absent'] }).notNull().default('present'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     uniquePerDay: uniqueIndex('attendance_employee_date_idx').on(t.organizationId, t.employeeId, t.workDate),
@@ -435,7 +435,7 @@ export const attendanceRecords = sqliteTable(
 // Audit log
 // ---------------------------------------------------------------------------
 
-export const auditLogs = sqliteTable(
+export const auditLogs = pgTable(
   'audit_logs',
   {
     id: text('id').primaryKey(),
@@ -445,7 +445,7 @@ export const auditLogs = sqliteTable(
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),
     metadata: text('metadata'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     entityIdx: index('audit_entity_idx').on(t.organizationId, t.entityType, t.entityId),
@@ -569,7 +569,7 @@ export type OfferResponseRateLimit = typeof offerResponseRateLimits.$inferSelect
 // Phase 2.4: controlled public job publishing
 // ---------------------------------------------------------------------------
 
-export const jobPublications = sqliteTable(
+export const jobPublications = pgTable(
   'job_publications',
   {
     id: text('id').primaryKey(),
@@ -582,13 +582,13 @@ export const jobPublications = sqliteTable(
     employmentType: text('employment_type').notNull(),
     workplaceType: text('workplace_type').notNull().default('on_site'),
     publicDepartmentName: text('public_department_name'),
-    publishedAt: text('published_at'),
-    closesAt: text('closes_at'),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'string' }),
+    closesAt: timestamp('closes_at', { withTimezone: true, mode: 'string' }),
     status: text('status', { enum: ['draft', 'published', 'closed', 'archived'] }).notNull().default('draft'),
-    applicationEnabled: integer('application_enabled', { mode: 'boolean' }).notNull().default(true),
+    applicationEnabled: boolean('application_enabled').notNull().default(true),
     createdBy: text('created_by').notNull(),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     publicSlugIdx: uniqueIndex('job_publications_public_slug_idx').on(t.publicSlug),
@@ -604,16 +604,16 @@ export const jobPublications = sqliteTable(
   })
 );
 
-export const publicApplicationRateLimits = sqliteTable(
+export const publicApplicationRateLimits = pgTable(
   'public_application_rate_limits',
   {
     key: text('key').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     publicationId: text('publication_id').notNull(),
     requestCount: integer('request_count').notNull().default(0),
-    windowStartedAt: text('window_started_at').notNull(),
-    lastSubmittedAt: text('last_submitted_at'),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true, mode: 'string' }).notNull(),
+    lastSubmittedAt: timestamp('last_submitted_at', { withTimezone: true, mode: 'string' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     organizationIdx: index('public_application_rate_limits_organization_idx').on(t.organizationId, t.updatedAt),
@@ -622,7 +622,7 @@ export const publicApplicationRateLimits = sqliteTable(
   })
 );
 
-export const offers = sqliteTable(
+export const offers = pgTable(
   'offers',
   {
     id: text('id').primaryKey(),
@@ -634,11 +634,11 @@ export const offers = sqliteTable(
     supersedesOfferId: text('supersedes_offer_id'),
     createdBy: text('created_by').notNull(),
     approvedBy: text('approved_by'),
-    approvedAt: text('approved_at'),
+    approvedAt: timestamp('approved_at', { withTimezone: true, mode: 'string' }),
     rejectionReason: text('rejection_reason'),
-    sentAt: text('sent_at'),
-    expiresAt: text('expires_at'),
-    respondedAt: text('responded_at'),
+    sentAt: timestamp('sent_at', { withTimezone: true, mode: 'string' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }),
+    respondedAt: timestamp('responded_at', { withTimezone: true, mode: 'string' }),
     responseReason: text('response_reason'),
     proposedJoiningDate: text('proposed_joining_date'),
     currency: text('currency').notNull().default('INR'),
@@ -651,11 +651,11 @@ export const offers = sqliteTable(
     benefitsSummary: text('benefits_summary'),
     employmentTerms: text('employment_terms'),
     candidateResponseTokenHash: text('candidate_response_token_hash'),
-    candidateResponseTokenExpiresAt: text('candidate_response_token_expires_at'),
-    candidateResponseTokenRevokedAt: text('candidate_response_token_revoked_at'),
-    candidateResponseTokenUsedAt: text('candidate_response_token_used_at'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    candidateResponseTokenExpiresAt: timestamp('candidate_response_token_expires_at', { withTimezone: true, mode: 'string' }),
+    candidateResponseTokenRevokedAt: timestamp('candidate_response_token_revoked_at', { withTimezone: true, mode: 'string' }),
+    candidateResponseTokenUsedAt: timestamp('candidate_response_token_used_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     referenceIdx: uniqueIndex('offers_reference_idx').on(t.offerReference),
@@ -674,7 +674,7 @@ export const offers = sqliteTable(
   })
 );
 
-export const offerHistory = sqliteTable(
+export const offerHistory = pgTable(
   'offer_history',
   {
     id: text('id').primaryKey(),
@@ -685,7 +685,7 @@ export const offerHistory = sqliteTable(
     toStatus: text('to_status'),
     actorUserId: text('actor_user_id'),
     metadata: text('metadata'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     offerIdx: index('offer_history_offer_idx').on(t.organizationId, t.offerId, t.createdAt),
@@ -696,15 +696,15 @@ export const offerHistory = sqliteTable(
   })
 );
 
-export const offerResponseRateLimits = sqliteTable(
+export const offerResponseRateLimits = pgTable(
   'offer_response_rate_limits',
   {
     key: text('key').primaryKey(),
     organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
     offerId: text('offer_id').notNull(),
     requestCount: integer('request_count').notNull().default(0),
-    windowStartedAt: text('window_started_at').notNull(),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true, mode: 'string' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     offerIdx: index('offer_response_rate_limits_offer_idx').on(t.organizationId, t.offerId, t.updatedAt),
@@ -712,7 +712,7 @@ export const offerResponseRateLimits = sqliteTable(
   })
 );
 
-export const candidateDocuments = sqliteTable(
+export const candidateDocuments = pgTable(
   'candidate_documents',
   {
     id: text('id').primaryKey(),
@@ -732,13 +732,13 @@ export const candidateDocuments = sqliteTable(
     lifecycleStatus: text('lifecycle_status', { enum: ['pending','available','archived','failed'] }).notNull().default('pending'),
     scanStatus: text('scan_status', { enum: ['pending_scan','clean','infected','scan_failed','scanner_unavailable','rejected'] }).notNull().default('pending_scan'),
     uploadedBy: text('uploaded_by').notNull(),
-    archivedAt: text('archived_at'),
-    deletedAt: text('deleted_at'),
-    retentionUntil: text('retention_until'),
-    legalHold: integer('legal_hold', { mode: 'boolean' }).notNull().default(false),
+    archivedAt: timestamp('archived_at', { withTimezone: true, mode: 'string' }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+    retentionUntil: timestamp('retention_until', { withTimezone: true, mode: 'string' }),
+    legalHold: boolean('legal_hold').notNull().default(false),
     supersedesDocumentId: text('supersedes_document_id'),
-    createdAt: text('created_at').notNull().default(sql`(current_timestamp)`),
-    updatedAt: text('updated_at').notNull().default(sql`(current_timestamp)`)
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow()
   },
   (t) => ({
     organizationIdx: index('candidate_documents_organization_idx').on(t.organizationId),

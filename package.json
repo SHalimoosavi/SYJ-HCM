@@ -1,6 +1,6 @@
 {
   "name": "syj-hcm",
-  "version": "0.14.0-alpha",
+  "version": "0.14.1-alpha",
   "private": true,
   "description": "SYJ-HCM - Phase 2.5 offers and offer management",
   "scripts": {
@@ -13,7 +13,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "test": "node --import tsx --test --test-reporter=spec tests/*.test.ts",
-    "platform:grant-admin": "tsx scripts/grant-platform-admin.ts"
+    "platform:grant-admin": "tsx scripts/grant-platform-admin.ts",
+    "test:foundation": "node --import tsx --test --test-reporter=spec tests/postgres-foundation.test.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
@@ -21,7 +22,8 @@
     "next": "15.5.25",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "recharts": "^2.13.0"
+    "recharts": "^2.13.0",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
