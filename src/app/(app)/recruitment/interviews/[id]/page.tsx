@@ -53,10 +53,10 @@ export default async function InterviewDetail({
         <Link className="text-sm text-brand-600 hover:underline" href="/recruitment/interviews">← Interviews</Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-brand-600">{raw.applicationReference}</p>
+            <p className="text-sm font-medium text-brand-600">{raw.interview.applicationReference}</p>
             <h1 className="text-2xl font-semibold">{interview.title}</h1>
             <p className="mt-1 text-sm text-surface-500">
-              {raw.firstName} {raw.lastName} · {raw.requisitionCode} — {raw.jobTitle}
+              {raw.interview.firstName} {raw.interview.lastName} · {raw.interview.requisitionCode} — {raw.interview.jobTitle}
             </p>
           </div>
           <span className={interview.status === 'completed' ? 'badge-green' : interview.status === 'cancelled' || interview.status === 'no_show' ? 'badge-gray' : 'badge-amber'}>
@@ -112,10 +112,10 @@ export default async function InterviewDetail({
         {visibleFeedback.length === 0 ? <p className="mt-4 text-sm text-surface-500">No feedback is available to you.</p> : <div className="mt-4 space-y-5">
           {visibleFeedback.map((f) => {
             const corrections = raw.corrections.filter((c) => c.feedbackId === f.feedback.id);
-            const feedback = corrections.length > 0 ? (() => {
-              const c = corrections[corrections.length - 1];
-              return { ...f.feedback, score: c.newScore, recommendation: c.newRecommendation, strengths: c.newStrengths, concerns: c.newConcerns, notes: c.newNotes };
-            })() : f.feedback;
+            const latestCorrection = corrections.at(-1);
+            const feedback = latestCorrection
+              ? { ...f.feedback, score: latestCorrection.newScore, recommendation: latestCorrection.newRecommendation, strengths: latestCorrection.newStrengths, concerns: latestCorrection.newConcerns, notes: latestCorrection.newNotes }
+              : f.feedback;
             return <article className="rounded-lg border border-surface-200 p-4" key={feedback.id}>
               <div className="flex flex-wrap justify-between gap-3"><div><p className="font-medium">{f.email}</p><p className="text-xs text-surface-500">Score {feedback.score}/5 · {feedback.recommendation.replaceAll('_', ' ')}</p></div><time className="text-xs text-surface-500">{feedback.submittedAt}</time></div>
               <div className="mt-4 grid gap-4 sm:grid-cols-3 text-sm"><div><p className="font-medium">Strengths</p><p className="mt-1 whitespace-pre-wrap text-surface-600">{feedback.strengths}</p></div><div><p className="font-medium">Concerns</p><p className="mt-1 whitespace-pre-wrap text-surface-600">{feedback.concerns}</p></div><div><p className="font-medium">Notes</p><p className="mt-1 whitespace-pre-wrap text-surface-600">{feedback.notes || '—'}</p></div></div>
