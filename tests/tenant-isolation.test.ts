@@ -19,8 +19,12 @@ async function setupTenants(){
   await setupDb.begin(async(tx)=>{
     await tx.unsafe("INSERT INTO organizations (id,name,slug,status) VALUES ('org_test_a','Tenant A','tenant-a','active'),('org_test_b','Tenant B','tenant-b','active') ON CONFLICT(id) DO UPDATE SET name=excluded.name,slug=excluded.slug,status=excluded.status");
     await tx.unsafe("DELETE FROM login_rate_limits WHERE key IN ('rate-a','rate-b')");
-    await tx.unsafe(`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,employee_id,is_active) VALUES ('${ids.userA}', '${ORG_A}', 'admin-a@tenant-a.test','h','s','admin','${ids.employeeA}',true),('${ids.userB}','${ORG_B}','admin-b@tenant-b.test','h','s','admin','${ids.employeeB}',true)`);
+
+    // users.employee_id references employees.id with an immediate PostgreSQL
+    // foreign key. Seed the parent employee rows before their user rows so the
+    // fixture models the production referential-integrity invariant.
     await tx.unsafe(`INSERT INTO employees (id,organization_id,employee_code,first_name,last_name,work_email,date_of_joining,designation) VALUES ('${ids.employeeA}','${ORG_A}','EMP-A','A','User','a@tenant-a.test','2026-01-01','Tester'),('${ids.employeeB}','${ORG_B}','EMP-B','B','User','b@tenant-b.test','2026-01-01','Tester')`);
+    await tx.unsafe(`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,employee_id,is_active) VALUES ('${ids.userA}', '${ORG_A}', 'admin-a@tenant-a.test','h','s','admin','${ids.employeeA}',true),('${ids.userB}','${ORG_B}','admin-b@tenant-b.test','h','s','admin','${ids.employeeB}',true)`);
     await tx.unsafe(`INSERT INTO leave_types (id,organization_id,name,annual_quota,is_paid) VALUES ('${ids.leaveTypeA}','${ORG_A}','Annual A',10,true),('${ids.leaveTypeB}','${ORG_B}','Annual B',10,true)`);
     await tx.unsafe(`INSERT INTO leave_balances (id,organization_id,employee_id,leave_type_id,year,allocated,used) VALUES ('${nanoid()}','${ORG_A}','${ids.employeeA}','${ids.leaveTypeA}',2026,10,0),('${nanoid()}','${ORG_B}','${ids.employeeB}','${ids.leaveTypeB}',2026,10,0)`);
     await tx.unsafe(`INSERT INTO leave_requests (id,organization_id,employee_id,leave_type_id,start_date,end_date,days,status) VALUES ('${ids.leaveRequestA}','${ORG_A}','${ids.employeeA}','${ids.leaveTypeA}','2026-10-01','2026-10-01',1,'pending'),('${ids.leaveRequestB}','${ORG_B}','${ids.employeeB}','${ids.leaveTypeB}','2026-10-02','2026-10-02',1,'pending')`);
