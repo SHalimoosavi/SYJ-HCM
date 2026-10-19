@@ -10,8 +10,22 @@ import { redirect } from 'next/navigation';
 
 export type EmployeeFormState = { error: string | null };
 
+type EmployeeEmploymentType = NonNullable<typeof employees.$inferInsert.employmentType>;
+
 function requiredString(formData: FormData, key: string): string {
   return String(formData.get(key) || '').trim();
+}
+
+function parseEmploymentType(value: string): EmployeeEmploymentType {
+  switch (value) {
+    case 'full_time':
+    case 'part_time':
+    case 'contract':
+    case 'intern':
+      return value;
+    default:
+      return 'full_time';
+  }
 }
 
 async function assertDepartmentInOrganization(organizationId: string, departmentId: string | null): Promise<void> {
@@ -55,7 +69,7 @@ export async function createEmployeeAction(
   const dateOfJoining = requiredString(formData, 'dateOfJoining');
   const designation = requiredString(formData, 'designation');
   const departmentId = requiredString(formData, 'departmentId') || null;
-  const employmentType = requiredString(formData, 'employmentType') || 'full_time';
+  const employmentType = parseEmploymentType(requiredString(formData, 'employmentType'));
   const location = requiredString(formData, 'location') || null;
   const phone = requiredString(formData, 'phone') || null;
 
@@ -77,12 +91,13 @@ export async function createEmployeeAction(
   }
 
   const id = nanoid();
-  const types = await db.select().from(leaveTypes).where(eq(leaveTypes.organizationId, actor.organizationId));
   const year = new Date().getFullYear();
 
   try {
     await db.transaction(async (tx) => {
       await setTenantContext(tx, actor.organizationId);
+
+      const types = await tx.select().from(leaveTypes).where(eq(leaveTypes.organizationId, actor.organizationId));
 
       await tx.insert(employees).values({
         id,
@@ -149,7 +164,7 @@ export async function updateEmployeeAction(
   const workEmail = requiredString(formData, 'workEmail').toLowerCase();
   const designation = requiredString(formData, 'designation');
   const departmentId = requiredString(formData, 'departmentId') || null;
-  const employmentType = requiredString(formData, 'employmentType') || 'full_time';
+  const employmentType = parseEmploymentType(requiredString(formData, 'employmentType'));
   const location = requiredString(formData, 'location') || null;
   const phone = requiredString(formData, 'phone') || null;
   const address = requiredString(formData, 'address') || null;
@@ -187,7 +202,7 @@ export async function updateEmployeeAction(
           address,
           emergencyContactName,
           emergencyContactPhone,
-          updatedAt: new Date(),
+          updatedAt: new Date().toISOString(),
         })
         .where(and(eq(employees.organizationId, actor.organizationId), eq(employees.id, employeeId)));
 
@@ -216,7 +231,7 @@ export async function setEmployeeStatusAction(employeeId: string, status: 'activ
     await setTenantContext(tx, actor.organizationId);
     const result = await tx
       .update(employees)
-      .set({ employmentStatus: status, updatedAt: new Date() })
+      .set({ employmentStatus: status, updatedAt: new Date().toISOString() })
       .where(and(eq(employees.organizationId, actor.organizationId), eq(employees.id, employeeId)))
       .returning({ id: employees.id });
     if (result.length !== 1) throw new Error('Employee not found.');
