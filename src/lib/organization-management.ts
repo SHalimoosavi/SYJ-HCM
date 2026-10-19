@@ -1,5 +1,5 @@
 import { db, setTenantContext } from '@/db/client';
-import { employees, organizations, users, auditLogs } from '@/db/schema';
+import { employees, organizations, users, sessions, auditLogs } from '@/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { ForbiddenError } from './auth';
 import type { CurrentUser } from './session';
@@ -28,7 +28,6 @@ export function assertOrganizationAdmin(user: CurrentUser): void {
 
 export async function getOrganizationForAdmin(user: CurrentUser) {
   assertOrganizationAdmin(user);
-  await db.execute(sql`select set_config('app.current_org_id', ${user.organizationId}, true)`);
   const rows = await db
     .select()
     .from(organizations)
@@ -39,7 +38,6 @@ export async function getOrganizationForAdmin(user: CurrentUser) {
 
 export async function getOrganizationMembersForAdmin(user: CurrentUser) {
   assertOrganizationAdmin(user);
-  await db.execute(sql`select set_config('app.current_org_id', ${user.organizationId}, true)`);
   return db
     .select({
       id: users.id,
@@ -58,7 +56,6 @@ export async function getOrganizationMembersForAdmin(user: CurrentUser) {
 
 export async function getAvailableEmployeesForLinking(user: CurrentUser) {
   assertOrganizationAdmin(user);
-  await db.execute(sql`select set_config('app.current_org_id', ${user.organizationId}, true)`);
   return db
     .select({
       id: employees.id,
@@ -145,10 +142,7 @@ export async function setMemberStatusInTransaction(actor: CurrentUser, targetUse
       .where(and(eq(users.id, targetUserId), eq(users.organizationId, actor.organizationId)));
 
     if (!isActive) {
-      await tx.delete((await import('@/db/schema')).sessions).where(and(
-        eq((await import('@/db/schema')).sessions.userId, targetUserId),
-        eq((await import('@/db/schema')).sessions.organizationId, actor.organizationId),
-      ));
+      await tx.delete(sessions).where(and(eq(sessions.userId, targetUserId), eq(sessions.organizationId, actor.organizationId)));
     }
 
     await tx.insert(auditLogs).values({
