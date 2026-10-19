@@ -12,14 +12,18 @@ if (!databaseUrl) throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL must b
 const resolvedSource = path.resolve(sourcePath);
 if (!fs.existsSync(resolvedSource)) throw new Error(`SQLite source database not found: ${resolvedSource}`);
 
-const tables = [
+const allTables = [
   'organizations','departments','employees','users','organization_settings','sessions','login_rate_limits',
   'platform_administrators','platform_audit_logs','leave_types','leave_balances','job_requisitions',
   'candidates','applications','application_history','recruitment_stages','interview_rounds','interviews',
   'interview_participants','interview_feedback','interview_feedback_corrections','interview_decisions',
   'candidate_notes','candidate_activities','leave_requests','attendance_records','audit_logs','job_publications',
   'public_application_rate_limits','offers','offer_history','offer_response_rate_limits','candidate_documents'
-];
+] as const;
+const requestedTables=process.env.SQLITE_IMPORT_TABLES?.split(',').map((value)=>value.trim()).filter(Boolean);
+const tables:string[]=requestedTables?.length ? requestedTables : [...allTables];
+const invalidTables=tables.filter((table)=>!allTables.includes(table as typeof allTables[number]));
+if(invalidTables.length)throw new Error(`Unsupported import table(s): ${invalidTables.join(', ')}`);
 
 type SourceRow = Record<string, unknown>;
 type TargetColumn = { column_name:string; data_type:string; udt_name:string; is_nullable:string };
