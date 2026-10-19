@@ -75,8 +75,14 @@ jobs:
       - name: Full PostgreSQL test suite
         run: npm test
 
+      - name: SQLite runtime inventory
+        run: bash scripts/check-no-sqlite-runtime.sh
+
       - name: Production build
         run: npm run build
+
+      - name: PostgreSQL backup and restore drill
+        run: bash scripts/backup-restore-drill.sh
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
