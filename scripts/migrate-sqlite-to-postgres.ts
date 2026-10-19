@@ -10,6 +10,7 @@ const dryRun = process.argv.includes('--dry-run');
 if (!sourcePath) throw new Error('SQLITE_SOURCE_PATH must point to the immutable source SQLite database.');
 if (!databaseUrl) throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL must be configured.');
 const resolvedSource = path.resolve(sourcePath);
+const migrationUrl = databaseUrl;
 if (!fs.existsSync(resolvedSource)) throw new Error(`SQLite source database not found: ${resolvedSource}`);
 
 const allTables = [
@@ -54,7 +55,7 @@ function convertValue(value:unknown,column:TargetColumn):MigrationValue{
 
 async function main(){
   const source=new DatabaseSync(resolvedSource,{readOnly:true});
-  const client=postgres(databaseUrl,{max:1});
+  const client=postgres(migrationUrl,{max:1});
   const report:{table:string;source:number;inserted:number;skipped:number;rejected:number;errors:string[]}[]=[];
   try{
     const targetTables=await client<{table_name:string}[]>`
