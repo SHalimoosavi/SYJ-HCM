@@ -1,4 +1,3 @@
-import postgres from 'postgres';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -11,22 +10,30 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-secret-only-use
 
 const runtimeRole = process.env.DATABASE_RUNTIME_ROLE || 'app_runtime';
 const runtimePassword = process.env.DATABASE_RUNTIME_PASSWORD || 'app_runtime';
-const admin = postgres(migrationUrl, { max: 1, connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT || 10) });
 const testDatabase = `syj_hcm_test_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
 
-const roleRows = await admin<{ rolname: string }[]>`
-  SELECT rolname FROM pg_roles WHERE rolname = ${runtimeRole} LIMIT 1
-`;
-if (roleRows.length === 0) {
-  const safeRole = runtimeRole.replaceAll('"', '""');
-  const safePassword = runtimePassword.replaceAll("'", "''");
-  await admin.unsafe(
-    `CREATE ROLE "${safeRole}" LOGIN PASSWORD '${safePassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`,
-  );
+const psql = (args: string[]) => {
+  execFileSync('psql', [migrationUrl, '-v', 'ON_ERROR_STOP=1', ...args], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+};
+
+const roleExists = execFileSync(
+  'psql',
+  [migrationUrl, '-Atqc', 'SELECT 1 FROM pg_roles WHERE rolname = current_setting(\'app.test_runtime_role\', true) LIMIT 1'],
+  {
+    env: { ...process.env, PGAPPNAME: 'syj-hcm-test-bootstrap', PGTZ: 'UTC' },
+    encoding: 'utf8',
+  },
+).trim();
+
+if (!roleExists) {
+  psql(['-c', `CREATE ROLE ${quoteIdentifier(runtimeRole)} LOGIN PASSWORD '${runtimePassword.replaceAll("'", "''")}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`]);
 }
 
-await admin.unsafe(`CREATE DATABASE "${testDatabase.replaceAll('"', '""')}" TEMPLATE template0`);
-await admin.end({ timeout: 5 });
+psql(['-c', `CREATE DATABASE ${quoteIdentifier(testDatabase)} TEMPLATE template0`]);
 
 const testMigrationUrl = new URL(migrationUrl);
 testMigrationUrl.pathname = `/${testDatabase}`;
@@ -43,18 +50,17 @@ execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/
   stdio: 'inherit',
 });
 
-const cleanup = async () => {
-  const cleanupClient = postgres(migrationUrl, { max: 1, connect_timeout: 10 });
+const cleanup = () => {
   try {
-    await cleanupClient.unsafe(`DROP DATABASE IF EXISTS "${testDatabase.replaceAll('"', '""')}" WITH (FORCE)`);
-  } finally {
-    await cleanupClient.end({ timeout: 5 });
+    psql(['-c', `DROP DATABASE IF EXISTS ${quoteIdentifier(testDatabase)} WITH (FORCE)`]);
+  } catch {
+    // Cleanup must not mask the original test failure.
   }
 };
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, async () => {
-    await cleanup();
+  process.once(signal, () => {
+    cleanup();
     process.exit(0);
   });
 }
