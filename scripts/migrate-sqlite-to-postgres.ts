@@ -25,7 +25,6 @@ type SourceRow = Record<string, unknown>;
 type TargetColumn = { column_name:string; data_type:string; udt_name:string; is_nullable:string };
 
 function quoteIdentifier(value:string){return `"${value.replaceAll('"','""')}"`;}
-function quoteLiteral(value:string){return `'${value.replaceAll("'","''")}'`;}
 function convertValue(value:unknown,column:TargetColumn):unknown{
   if(value===null||value===undefined)return null;
   if(column.data_type==='boolean'){
@@ -50,10 +49,10 @@ function convertValue(value:unknown,column:TargetColumn):unknown{
 
 async function main(){
   const source=new DatabaseSync(resolvedSource,{readOnly:true});
-  const sql=postgres(databaseUrl,{max:1});
+  const client=postgres(databaseUrl,{max:1});
   const report:{table:string;source:number;inserted:number;skipped:number;rejected:number;errors:string[]}[]=[];
   try{
-    const targetTables=await sql<{table_name:string}[]>`
+    const targetTables=await client<{table_name:string}[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema='public' AND table_type='BASE TABLE'
     `;
@@ -66,7 +65,7 @@ async function main(){
 
     const targetColumns=new Map<string,TargetColumn[]>();
     for(const table of tables){
-      const columns=await sql<TargetColumn[]>`
+      const columns=await client<TargetColumn[]>`
         SELECT column_name,data_type,udt_name,is_nullable
         FROM information_schema.columns
         WHERE table_schema='public' AND table_name=${table}
@@ -84,7 +83,7 @@ async function main(){
       return;
     }
 
-    await sql.begin(async(tx)=>{
+    await client.begin(async(tx)=>{
       for(const table of tables){
         const entry={table,source:0,inserted:0,skipped:0,rejected:0,errors:[] as string[]};
         report.push(entry);
@@ -92,16 +91,17 @@ async function main(){
         const sourceRows=source.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as SourceRow[];
         entry.source=sourceRows.length;
         if(!sourceRows.length)continue;
-        const sourceColumnNames=sourceRows.length?Object.keys(sourceRows[0]!):[];
+        const firstRow=sourceRows[0];
+        if(!firstRow){entry.skipped=sourceRows.length;continue;}
+        const sourceColumnNames=Object.keys(firstRow);
         const usable=columns.filter((column)=>sourceColumnNames.includes(column.column_name));
         if(!usable.length){entry.skipped=sourceRows.length;continue;}
         const names=usable.map((column)=>quoteIdentifier(column.column_name)).join(',');
         for(const row of sourceRows){
           try{
             const values=usable.map((column)=>convertValue(row[column.column_name],column));
-            const placeholders=values.map((_,index)=>sql`${values[index]}`);
-            const query=sql.unsafe(`INSERT INTO ${quoteIdentifier(table)} (${names}) VALUES (${values.map((_,index)=>`$${index+1}`).join(',')}) ON CONFLICT DO NOTHING RETURNING 1`,values as any[]);
-            const result=await tx.unsafe(query.text,query.parameters as unknown[]);
+            const text=`INSERT INTO ${quoteIdentifier(table)} (${names}) VALUES (${values.map((_,index)=>`$${index+1}`).join(',')}) ON CONFLICT DO NOTHING RETURNING 1`;
+            const result=await tx.unsafe(text,values);
             if(result.length)entry.inserted++;else entry.skipped++;
           }catch(error){
             entry.rejected++;
@@ -115,7 +115,7 @@ async function main(){
     console.log(JSON.stringify({dryRun:false,source:resolvedSource,report},null,2));
   }finally{
     source.close();
-    await sql.end({timeout:5});
+    await client.end({timeout:5});
   }
 }
 
