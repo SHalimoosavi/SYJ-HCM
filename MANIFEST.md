@@ -1,38 +1,61 @@
-# SYJ-HCM v0.14.1-alpha — PostgreSQL Foundation Manifest
+# SYJ-HCM v0.14.1-alpha — PostgreSQL Application Migration Manifest
 
 Baseline: `v0.14.0-alpha` / `7fd35f905b8fa5ad9a6ad0473858b138e745fd4f`
 
-- `package.json` — bumped pre-release version and added the single PostgreSQL runtime dependency `postgres`.
-- `package-lock.json` — updated root version/dependency lock metadata for `postgres` 3.4.9.
-- `src/db/client.ts` — replaced `node:sqlite`/SQLite proxy with postgres.js + Drizzle PostgreSQL and added tenant-context transaction helper; retained fail-fast compatibility exports for Prompt B's unmigrated call sites.
-- `src/db/schema.ts` — converted all tables from `sqlite-core` to `pg-core`, native booleans, and timezone-aware PostgreSQL timestamps while preserving the v0.14.0-alpha model including offers.
-- `src/lib/session.ts` — converted the authentication/session database path to asynchronous PostgreSQL, including `resolve_session()` bootstrap and transaction-local tenant context.
-- `src/lib/audit.ts` — converted the login-path audit writer to PostgreSQL transactions; synchronous legacy API now fails explicitly until Prompt B migration.
-- `src/lib/login-rate-limit.ts` — converted login rate-limit persistence to asynchronous PostgreSQL tagged-template queries.
-- `src/app/login/actions.ts` — converted the login path to the PostgreSQL bootstrap identity lookup and async rate limiting/session/audit transaction.
-- `src/middleware.ts` — removed the stale SQLite-specific runtime comment; middleware remains database-free on the Edge runtime.
-- `drizzle.config.ts` — switched Drizzle configuration to PostgreSQL and `DATABASE_URL`.
-- `.env.example` — documented runtime/migration PostgreSQL connection roles and safe configuration.
-- `scripts/migrate.ts` — rewrote the hand-rolled migration runner for PostgreSQL with the existing `__migrations` ledger pattern and advisory migration lock.
-- `scripts/start.ts` — rewrote fail-closed startup checks against PostgreSQL and verifies required RLS coverage.
-- `.github/workflows/ci.yml` — added PostgreSQL 16 service, health check, dedicated runtime role and migration environment.
-- `README.md` — replaced SQLite setup guidance with PostgreSQL architecture, RLS, bootstrap and rollback documentation.
-- `drizzle/postgres/0000_init.sql` — PostgreSQL translation of historical migration 0000.
-- `drizzle/postgres/0001_phase1_1_security.sql` — PostgreSQL translation of historical migration 0001 schema changes; integrity triggers are installed in the PostgreSQL foundation layer.
-- `drizzle/postgres/0002_attendance_clock_order_insert_guard.sql` — PostgreSQL historical phase marker/schema path for migration 0002.
-- `drizzle/postgres/0003_multi_tenant_foundation.sql` — PostgreSQL translation of historical tenant foundation migration 0003.
-- `drizzle/postgres/0004_phase1_2c_productization.sql` — PostgreSQL translation of productization migration 0004.
-- `drizzle/postgres/0005_phase2_1_recruitment_foundation.sql` — PostgreSQL translation of recruitment foundation migration 0005.
-- `drizzle/postgres/0006_phase2_2_recruitment_workflow_interviews.sql` — PostgreSQL translation of workflow/interview migration 0006.
-- `drizzle/postgres/0007_phase2_3_candidate_documents.sql` — PostgreSQL translation of candidate-document migration 0007.
-- `drizzle/postgres/0008_phase2_4_job_publishing.sql` — PostgreSQL translation of public job publishing migration 0008.
-- `drizzle/postgres/0009_phase2_5_offer_management.sql` — PostgreSQL translation of already-released Phase 2.5 offer migration 0009; no Phase 2.5 redesign.
-- `drizzle/postgres/0010_postgres_foundation.sql` — PostgreSQL-native boolean/timestamp conversion, integrity trigger functions, RLS policies, runtime grants, and narrow security-definer bootstrap functions.
-- `MIGRATION.md` — foundation prerequisites, environment/role setup, exact apply sequence, RLS verification and rollback procedure.
-- `MANIFEST.md` — this complete change inventory.
+Current review gate: **PR #5 — OPEN**
 
-## Intentionally not migrated in Foundation A
+## PostgreSQL foundation and runtime
 
-The remaining application-wide synchronous SQLite call sites are deliberately deferred to **Prompt B**, as explicitly scoped by Build Prompt A. They have no SQLite implementation behind them anymore: the temporary `sqlite`/`withSqliteTransactionSync` compatibility exports in `src/db/client.ts` fail closed if an unmigrated path is invoked. This is not a claim that the entire application is PostgreSQL-runtime complete yet.
+- `package.json` — PostgreSQL runtime scripts, SQLite import command, backup/restore drill, deterministic repository lint gate.
+- `src/db/client.ts` — Drizzle/Postgres.js runtime client and transaction-local `app.current_org_id` helper; no SQLite compatibility exports remain.
+- `src/db/schema.ts` — PostgreSQL `pg-core` schema, native booleans and PostgreSQL timestamps.
+- `src/lib/session.ts` — asynchronous PostgreSQL session/bootstrap path.
+- `src/lib/audit.ts` — PostgreSQL audit transactions.
+- `src/lib/login-rate-limit.ts` — PostgreSQL login rate limiting.
+- `src/app/login/actions.ts` — asynchronous PostgreSQL authentication path.
+- `drizzle.config.ts` — PostgreSQL Drizzle configuration.
+- `scripts/migrate.ts` — PostgreSQL migration runner with migration ledger and advisory lock.
+- `scripts/start.ts` — PostgreSQL startup validation and RLS checks.
 
-No Git tag was created, no Git history was modified, and nothing was pushed.
+## Application migration
+
+- Employee, department, organization, attendance, leave, recruitment, interviews, candidate documents, publishing, offers, audit, sessions, rate limiting and server-action database paths are being validated against PostgreSQL.
+- `src/lib/public-recruitment.ts` — anonymous careers/application flow uses the narrow `resolve_job_publication()` bootstrap.
+- `drizzle/postgres/0011_public_recruitment_bootstrap.sql` — extends the public bootstrap with only the metadata required to complete anonymous application intake without bypassing RLS.
+- Phase 2.5 offer functionality remains part of the migration target; no offer redesign is introduced.
+
+## Data portability and operations
+
+- `scripts/migrate-sqlite-to-postgres.ts` — read-only SQLite source importer with deterministic table ordering, type conversion, row reporting, dry-run support and transactional destination import.
+- `tests/sqlite-to-postgres-migration.test.ts` — executes a representative real SQLite→PostgreSQL import and verifies safe rerun behavior.
+- `scripts/backup-restore-drill.sh` — disposable PostgreSQL custom-format backup/restore validation with runtime-role verification.
+- `scripts/check-no-sqlite-runtime.sh` — release gate for legacy SQLite runtime consumers.
+
+## Test migration
+
+Database-dependent tests are being converted to PostgreSQL rather than preserving SQLite adapters. This includes recruitment workflow, recruitment foundation, job publishing, organization management, concurrency invariants, security constraints, tenant isolation, candidate documents and migration drills.
+
+The test bootstrap provisions isolated PostgreSQL test databases; production `DATABASE_URL` must never be used for destructive test setup.
+
+## RLS / tenant security
+
+Tenant-scoped transactions use transaction-local context. Application-layer authorization remains mandatory. The runtime role must remain `NOBYPASSRLS`.
+
+The release gate covers cross-tenant SELECT/INSERT/UPDATE/DELETE behavior, missing tenant context, connection-pool isolation, public recruitment bootstrap boundaries, session bootstrap and offer/document ownership.
+
+## Historical migration preservation
+
+Historical SQLite migrations `0000`–`0009` remain preserved as source history. PostgreSQL runtime migrations are maintained separately under `drizzle/postgres/` and currently extend through `0011_public_recruitment_bootstrap.sql`.
+
+No historical migration was reordered or silently replaced.
+
+## Documentation
+
+- `README.md` — PostgreSQL runtime architecture and operational commands.
+- `MIGRATION.md` — migration, RLS, public bootstrap, data portability and backup/restore procedures.
+- `.env.example` — separated runtime/migration database configuration.
+- `.github/workflows/ci.yml` — PostgreSQL 16 release validation pipeline.
+
+## Release state
+
+No final release tag has been created. PR #5 must remain open until CI, typecheck, lint, full tests, PostgreSQL integration/RLS validation, zero runtime SQLite inventory, data migration drill, backup/restore drill, production build and security/dependency checks are genuinely green.
