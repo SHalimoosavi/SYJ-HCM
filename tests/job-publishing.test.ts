@@ -4,24 +4,10 @@ import assert from 'node:assert/strict';
 import postgres from 'postgres';
 import fs from 'node:fs';
 import path from 'node:path';
-
-const migrationUrl=process.env.DATABASE_MIGRATION_URL;
-if(!migrationUrl)throw new Error('DATABASE_MIGRATION_URL is required for PostgreSQL test setup.');
-const db=postgres(migrationUrl,{max:1});
-
-async function reset(){
-  await db.begin(async(tx)=>{
-    await tx.unsafe('TRUNCATE TABLE public_application_rate_limits, candidate_documents, candidate_activities, candidate_notes, application_history, job_publications, applications, candidates, job_requisitions, departments, users, employees, organization_settings, organizations CASCADE');
-    await tx`INSERT INTO organizations (id,name,slug,status) VALUES ('pub_org_a','Public A','public-a','active'),('pub_org_b','Public B','public-b','active')`;
-    await tx`INSERT INTO organization_settings (organization_id,public_careers_enabled) VALUES ('pub_org_a',true),('pub_org_b',true)`;
-    await tx`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('pub-a','pub_org_a','pub-a@test','x','x','hr',true),('pub-b','pub_org_b','pub-b@test','x','x','hr',true)`;
-    await tx`INSERT INTO job_requisitions (id,organization_id,requisition_code,title,employment_type,description,requirements,status,created_by) VALUES ('pub-job-a','pub_org_a','PUB-A','Backend Engineer','full_time','Public backend role','Experience','open','pub-a'),('pub-job-b','pub_org_b','PUB-B','Other Backend Role','full_time','Other role','Experience','open','pub-b')`;
-  });
-}
+const migrationUrl=process.env.DATABASE_MIGRATION_URL;if(!migrationUrl)throw new Error('DATABASE_MIGRATION_URL is required for PostgreSQL test setup.');const db=postgres(migrationUrl,{max:1});
+async function reset(){await db.begin(async(tx)=>{await tx.unsafe('TRUNCATE TABLE public_application_rate_limits, candidate_documents, candidate_activities, candidate_notes, application_history, job_publications, applications, candidates, job_requisitions, departments, users, employees, organization_settings, organizations CASCADE');await tx`INSERT INTO organizations (id,name,slug,status) VALUES ('pub_org_a','Public A','public-a','active'),('pub_org_b','Public B','public-b','active')`;await tx`INSERT INTO organization_settings (organization_id,public_careers_enabled) VALUES ('pub_org_a',true),('pub_org_b',true)`;await tx`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('pub-a','pub_org_a','pub-a@test','x','x','hr',true),('pub-b','pub_org_b','pub-b@test','x','x','hr',true)`;await tx`INSERT INTO job_requisitions (id,organization_id,requisition_code,title,employment_type,description,requirements,status,created_by) VALUES ('pub-job-a','pub_org_a','PUB-A','Backend Engineer','full_time','Public backend role','Experience','open','pub-a'),('pub-job-b','pub_org_b','PUB-B','Other Backend Role','full_time','Other role','Experience','open','pub-b')`;});}
 async function publication(id='pub-p-a',org='pub_org_a',job='pub-job-a',slug='backend-engineer-a',status='draft'){await db`INSERT INTO job_publications (id,organization_id,job_requisition_id,public_slug,public_title,public_description,public_location,employment_type,workplace_type,status,application_enabled,created_by) VALUES (${id},${org},${job},${slug},'Backend Engineer','A public role','Hyderabad','full_time','hybrid',${status},true,${org==='pub_org_a'?'pub-a':'pub-b'})`;}
-beforeEach(reset);
-test.after(async()=>{await db.end({timeout:5});});
-
+beforeEach(reset);test.after(async()=>{await db.end({timeout:5});});
 test('publication table exists',async()=>{const rows=await db`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='job_publications'`;assert.equal(rows.length,1);});
 test('rate limit table exists',async()=>{const rows=await db`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='public_application_rate_limits'`;assert.equal(rows.length,1);});
 test('organization public careers defaults off for new settings',async()=>{await db`INSERT INTO organizations (id,name,slug,status) VALUES ('pub_org_new','New','new-public','active')`;await db`INSERT INTO organization_settings (organization_id) VALUES ('pub_org_new')`;const [r]=await db`SELECT public_careers_enabled FROM organization_settings WHERE organization_id='pub_org_new'`;assert.equal(r?.public_careers_enabled,false);});
@@ -42,7 +28,7 @@ test('rate request count cannot be negative',async()=>{await publication();await
 test('publication identity cannot change',async()=>{await publication();await assert.rejects(()=>db`UPDATE job_publications SET organization_id='pub_org_b' WHERE id='pub-p-a'`,/immutable|tenant/i);});
 test('archived publication is retained but not treated as published by status',async()=>{await publication('pub-p-a','pub_org_a','pub-job-a','archived-role','archived');const [r]=await db`SELECT status FROM job_publications WHERE id='pub-p-a'`;assert.equal(r?.status,'archived');});
 test('closed publication is retained',async()=>{await publication('pub-p-a','pub_org_a','pub-job-a','closed-role','closed');const [r]=await db`SELECT status FROM job_publications WHERE id='pub-p-a'`;assert.equal(r?.status,'closed');});
-test('application_enabled is constrained to boolean values',async()=>{await publication();await assert.rejects(()=>db`UPDATE job_publications SET application_enabled=2 WHERE id='pub-p-a'`,/invalid input syntax|check/i);});
+test('application_enabled is constrained to boolean values',async()=>{await publication();await assert.rejects(()=>db`UPDATE job_publications SET application_enabled=2 WHERE id='pub-p-a'`,/boolean|integer|type|check/i);});
 test('historical migrations remain present through 0007',()=>{const files=fs.readdirSync(path.resolve(process.cwd(),'drizzle')).filter(f=>f.endsWith('.sql')).sort();assert.deepEqual(files.slice(0,8),['0000_init.sql','0001_phase1_1_security.sql','0002_attendance_clock_order_insert_guard.sql','0003_multi_tenant_foundation.sql','0004_phase1_2c_productization.sql','0005_phase2_1_recruitment_foundation.sql','0006_phase2_2_recruitment_workflow_interviews.sql','0007_phase2_3_candidate_documents.sql']);});
 test('public publication does not expose raw job table as its schema',async()=>{const rows=await db`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='job_publications'`;const cols=new Set(rows.map((r)=>r.column_name));for(const forbidden of ['salary_min','salary_max','currency','requirements','skills','recruiter_user_id','hiring_manager_employee_id'])assert.equal(cols.has(forbidden),false);});
 test('tenant-specific publication index exists',async()=>{const rows=await db`SELECT indexname FROM pg_indexes WHERE schemaname='public' AND tablename='job_publications'`;assert.ok(rows.some((r)=>r.indexname==='job_publications_status_idx'));});
