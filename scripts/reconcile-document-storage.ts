@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { sqlite } from '../src/db/client';
+import { db } from '../src/db/client';
+import { candidateDocuments } from '../src/db/schema';
 
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -12,11 +13,11 @@ async function walk(dir: string): Promise<string[]> {
 }
 
 async function main() {
-  const root=path.resolve(process.env.DOCUMENT_STORAGE_PATH || './data/storage');
-  const rows=sqlite.prepare('SELECT storage_key FROM candidate_documents').all() as Array<{storage_key:string}>;
-  const known=new Set(rows.map(r=>path.resolve(root,r.storage_key)));
+  const root=path.resolve(process.env.DOCUMENT_STORAGE_PATH || './data/candidate-documents');
+  const rows=await db.select({storageKey:candidateDocuments.storageKey}).from(candidateDocuments);
+  const known=new Set(rows.map((row)=>path.resolve(root,row.storageKey)));
   const files=await walk(root).catch(()=>[] as string[]);
-  const orphans=files.filter(f=>!f.endsWith('.tmp')&&!known.has(path.resolve(f)));
+  const orphans=files.filter((file)=>!file.endsWith('.tmp')&&!known.has(path.resolve(file)));
   console.log(`storage files=${files.length} db references=${known.size} orphan candidates=${orphans.length}`);
   for(const file of orphans) console.log(`ORPHAN ${path.relative(root,file)}`);
 }
