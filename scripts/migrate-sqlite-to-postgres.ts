@@ -20,7 +20,7 @@ const allTables = [
   'candidate_notes','candidate_activities','leave_requests','attendance_records','audit_logs','job_publications',
   'public_application_rate_limits','offers','offer_history','offer_response_rate_limits','candidate_documents'
 ] as const;
-const requestedTables=process.env.SQLITE_IMPORT_TABLES?.split(',').map((value)=>value.trim()).filter(Boolean);
+const requestedTables: string[] | undefined = process.env.SQLITE_IMPORT_TABLES?.split(',').map((value)=>value.trim()).filter((value): value is string=>value.length>0);
 const tables:string[]=requestedTables?.length ? requestedTables : [...allTables];
 const invalidTables=tables.filter((table)=>!allTables.includes(table as typeof allTables[number]));
 if(invalidTables.length)throw new Error(`Unsupported import table(s): ${invalidTables.join(', ')}`);
@@ -28,8 +28,10 @@ if(invalidTables.length)throw new Error(`Unsupported import table(s): ${invalidT
 type SourceRow = Record<string, unknown>;
 type TargetColumn = { column_name:string; data_type:string; udt_name:string; is_nullable:string };
 
+type MigrationValue = string | number | boolean | null;
+
 function quoteIdentifier(value:string){return `"${value.replaceAll('"','""')}"`;}
-function convertValue(value:unknown,column:TargetColumn):unknown{
+function convertValue(value:unknown,column:TargetColumn):MigrationValue{
   if(value===null||value===undefined)return null;
   if(column.data_type==='boolean'){
     if(typeof value==='boolean')return value;
@@ -48,7 +50,7 @@ function convertValue(value:unknown,column:TargetColumn):unknown{
     if(!Number.isFinite(number))throw new Error(`Invalid numeric value for ${column.column_name}: ${String(value)}`);
     return number;
   }
-  return value;
+  return String(value);
 }
 
 async function main(){
@@ -104,8 +106,12 @@ async function main(){
         for(const row of sourceRows){
           try{
             const values=usable.map((column)=>convertValue(row[column.column_name],column));
-            const text=`INSERT INTO ${quoteIdentifier(table)} (${names}) VALUES (${values.map((_,index)=>`$${index+1}`).join(',')}) ON CONFLICT DO NOTHING RETURNING 1`;
-            const result=await tx.unsafe(text,values);
+            const result=await tx`
+              INSERT INTO ${tx.unsafe(quoteIdentifier(table))} (${tx.unsafe(names)})
+              VALUES ${tx(values)}
+              ON CONFLICT DO NOTHING
+              RETURNING 1
+            `;
             if(result.length)entry.inserted++;else entry.skipped++;
           }catch(error){
             entry.rejected++;
