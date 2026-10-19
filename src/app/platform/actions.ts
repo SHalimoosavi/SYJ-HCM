@@ -9,11 +9,11 @@ function fail(message: string): never { redirect(`/platform?error=${encodeURICom
 export async function provisionOrganizationAction(formData: FormData): Promise<void> {
   const actor = await requirePlatformAdmin();
   try {
-    provisionOrganizationInTransaction(actor, {
+    await provisionOrganizationInTransaction(actor, {
       name: String(formData.get('name') ?? ''),
       slug: String(formData.get('slug') ?? ''),
       adminEmail: String(formData.get('adminEmail') ?? ''),
-      adminPassword: String(formData.get('adminPassword') ?? '')
+      adminPassword: String(formData.get('adminPassword') ?? ''),
     });
   } catch (error) {
     fail(error instanceof Error ? error.message : 'Organization provisioning failed.');
@@ -26,7 +26,7 @@ export async function setOrganizationStatusAction(formData: FormData): Promise<v
   try {
     const status = String(formData.get('status') ?? '');
     if (status !== 'active' && status !== 'suspended') throw new Error('Invalid organization lifecycle state.');
-    setOrganizationStatusInTransaction(actor, String(formData.get('organizationId') ?? ''), status);
+    await setOrganizationStatusInTransaction(actor, String(formData.get('organizationId') ?? ''), status);
   } catch (error) {
     fail(error instanceof Error ? error.message : 'Organization lifecycle action failed.');
   }

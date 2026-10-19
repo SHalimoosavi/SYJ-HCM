@@ -1,17 +1,15 @@
 import { cookies } from 'next/headers';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
-import { db, sqlite } from '@/db/client';
+import { db, sql, setTenantContext, type DbTransaction } from '@/db/client';
 import { organizations, sessions, users } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { isSessionActive, SESSION_ABSOLUTE_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from './session-policy';
 
 const COOKIE_NAME = 'syj_session';
 
 function getSecret(): string {
   const secret = process.env.SESSION_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error('SESSION_SECRET must be configured with at least 32 characters.');
-  }
+  if (!secret || secret.length < 32) throw new Error('SESSION_SECRET must be configured with at least 32 characters.');
   return secret;
 }
 
@@ -36,11 +34,7 @@ function verify(cookieValue: string): string | null {
 function makeSessionRecord(): { id: string; expiresAt: string; lastActiveAt: string } {
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
-  return {
-    id: sessionId,
-    expiresAt: new Date(now + SESSION_ABSOLUTE_TTL_MS).toISOString(),
-    lastActiveAt: new Date(now).toISOString()
-  };
+  return { id: sessionId, expiresAt: new Date(now + SESSION_ABSOLUTE_TTL_MS).toISOString(), lastActiveAt: new Date(now).toISOString() };
 }
 
 async function setSessionCookie(sessionId: string, expiresAt: string): Promise<void> {
@@ -56,29 +50,31 @@ async function setSessionCookie(sessionId: string, expiresAt: string): Promise<v
 
 export async function createSession(userId: string, organizationId: string): Promise<void> {
   const record = makeSessionRecord();
-  await db.insert(sessions).values({
-    id: record.id,
-    organizationId,
-    userId,
-    expiresAt: record.expiresAt,
-    lastActiveAt: record.lastActiveAt
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, organizationId);
+    await tx.insert(sessions).values({ id: record.id, organizationId, userId, expiresAt: record.expiresAt, lastActiveAt: record.lastActiveAt });
   });
   await setSessionCookie(record.id, record.expiresAt);
 }
 
-export function createSessionRecordInTransaction(userId: string, organizationId: string): { id: string; expiresAt: string; lastActiveAt: string } {
+export async function createSessionRecordInTransaction(tx: DbTransaction, userId: string, organizationId: string): Promise<{ id: string; expiresAt: string; lastActiveAt: string }> {
   const record = makeSessionRecord();
-  sqlite
-    .prepare(`
-      INSERT INTO sessions (id, organization_id, user_id, expires_at, last_active_at)
-      VALUES (?, ?, ?, ?, ?)
-    `)
-    .run(record.id, organizationId, userId, record.expiresAt, record.lastActiveAt);
+  await setTenantContext(tx, organizationId);
+  await tx.insert(sessions).values({ id: record.id, organizationId, userId, expiresAt: record.expiresAt, lastActiveAt: record.lastActiveAt });
   return record;
 }
 
 export async function setSessionCookieForRecord(record: { id: string; expiresAt: string }): Promise<void> {
   await setSessionCookie(record.id, record.expiresAt);
+}
+
+async function resolveSessionBootstrap(sessionId: string): Promise<{ organizationId: string; userId: string } | null> {
+  const rows = await sql<{ organization_id: string; user_id: string }[]>`
+    SELECT organization_id, user_id
+    FROM resolve_session(${sessionId})
+  `;
+  const row = rows[0];
+  return row ? { organizationId: row.organization_id, userId: row.user_id } : null;
 }
 
 export async function destroySession(): Promise<void> {
@@ -87,14 +83,12 @@ export async function destroySession(): Promise<void> {
   if (raw) {
     const sessionId = verify(raw);
     if (sessionId) {
-      const sessionRows = await db
-        .select({ organizationId: sessions.organizationId })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .limit(1);
-      const organizationId = sessionRows[0]?.organizationId;
-      if (organizationId) {
-        await db.delete(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, organizationId)));
+      const bootstrap = await resolveSessionBootstrap(sessionId);
+      if (bootstrap) {
+        await db.transaction(async (tx) => {
+          await setTenantContext(tx, bootstrap.organizationId);
+          await tx.delete(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, bootstrap.organizationId)));
+        });
       }
     }
   }
@@ -102,7 +96,10 @@ export async function destroySession(): Promise<void> {
 }
 
 export async function destroyAllSessionsForUser(userId: string, organizationId: string): Promise<void> {
-  await db.delete(sessions).where(and(eq(sessions.userId, userId), eq(sessions.organizationId, organizationId)));
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, organizationId);
+    await tx.delete(sessions).where(and(eq(sessions.userId, userId), eq(sessions.organizationId, organizationId)));
+  });
 }
 
 export async function destroyOtherSessionsForUser(userId: string, organizationId: string): Promise<number> {
@@ -111,10 +108,13 @@ export async function destroyOtherSessionsForUser(userId: string, organizationId
   const currentSessionId = raw ? verify(raw) : null;
   if (!currentSessionId) return 0;
 
-  const result = sqlite
-    .prepare('DELETE FROM sessions WHERE organization_id = ? AND user_id = ? AND id <> ?')
-    .run(organizationId, userId, currentSessionId);
-  return Number(result.changes);
+  return db.transaction(async (tx) => {
+    await setTenantContext(tx, organizationId);
+    const deleted = await tx.delete(sessions)
+      .where(and(eq(sessions.organizationId, organizationId), eq(sessions.userId, userId), ne(sessions.id, currentSessionId)))
+      .returning({ id: sessions.id });
+    return deleted.length;
+  });
 }
 
 export type CurrentUser = {
@@ -126,62 +126,55 @@ export type CurrentUser = {
   organizationStatus: 'active' | 'suspended';
 };
 
-/**
- * Resolves the currently authenticated user from the session cookie.
- * Sessions have both a seven-day absolute lifetime and a 24-hour idle
- * lifetime. Activity refreshes the DB-backed idle timestamp at most every
- * five minutes, while the browser cookie remains bounded by the absolute
- * seven-day expiry.
- */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const cookieStore = await cookies();
   const raw = cookieStore.get(COOKIE_NAME)?.value;
   if (!raw) return null;
-
   const sessionId = verify(raw);
   if (!sessionId) return null;
 
-  const rows = await db
-    .select({
-      sessionOrganizationId: sessions.organizationId,
-      userOrganizationId: users.organizationId,
-      sessionExpiresAt: sessions.expiresAt,
-      sessionLastActiveAt: sessions.lastActiveAt,
-      userId: users.id,
-      email: users.email,
-      role: users.role,
-      isActive: users.isActive,
-      employeeId: users.employeeId,
-      organizationStatus: organizations.status
-    })
-    .from(sessions)
-    .innerJoin(users, eq(sessions.userId, users.id))
-    .innerJoin(organizations, eq(users.organizationId, organizations.id))
-    .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, users.organizationId)))
-    .limit(1);
+  const bootstrap = await resolveSessionBootstrap(sessionId);
+  if (!bootstrap) return null;
 
-  const row = rows[0];
-  if (!row || !row.isActive || row.sessionOrganizationId !== row.userOrganizationId) return null;
+  return db.transaction(async (tx) => {
+    await setTenantContext(tx, bootstrap.organizationId);
+    const rows = await tx
+      .select({
+        sessionOrganizationId: sessions.organizationId,
+        userOrganizationId: users.organizationId,
+        sessionExpiresAt: sessions.expiresAt,
+        sessionLastActiveAt: sessions.lastActiveAt,
+        userId: users.id,
+        email: users.email,
+        role: users.role,
+        isActive: users.isActive,
+        employeeId: users.employeeId,
+        organizationStatus: organizations.status
+      })
+      .from(sessions)
+      .innerJoin(users, eq(sessions.userId, users.id))
+      .innerJoin(organizations, eq(users.organizationId, organizations.id))
+      .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, users.organizationId)))
+      .limit(1);
 
-  const now = Date.now();
-  const lastActive = new Date(row.sessionLastActiveAt).getTime();
-  if (!isSessionActive(now, row.sessionLastActiveAt, row.sessionExpiresAt)) {
-    return null;
-  }
+    const row = rows[0];
+    if (!row || !row.isActive || row.sessionOrganizationId !== row.userOrganizationId) return null;
+    const now = Date.now();
+    if (!isSessionActive(now, row.sessionLastActiveAt, row.sessionExpiresAt)) return null;
 
-  if (now - lastActive >= SESSION_TOUCH_INTERVAL_MS) {
-    await db
-      .update(sessions)
-      .set({ lastActiveAt: new Date(now).toISOString() })
-      .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, row.sessionOrganizationId)));
-  }
+    if (now - new Date(row.sessionLastActiveAt).getTime() >= SESSION_TOUCH_INTERVAL_MS) {
+      await tx.update(sessions)
+        .set({ lastActiveAt: new Date(now).toISOString() })
+        .where(and(eq(sessions.id, sessionId), eq(sessions.organizationId, row.sessionOrganizationId)));
+    }
 
-  return {
-    id: row.userId,
-    email: row.email,
-    role: row.role,
-    employeeId: row.employeeId,
-    organizationId: row.userOrganizationId,
-    organizationStatus: row.organizationStatus
-  };
+    return {
+      id: row.userId,
+      email: row.email,
+      role: row.role,
+      employeeId: row.employeeId,
+      organizationId: row.userOrganizationId,
+      organizationStatus: row.organizationStatus
+    };
+  });
 }

@@ -1,12 +1,13 @@
 'use server';
 
 import { headers } from 'next/headers';
-import { db, withSqliteTransactionSync } from '@/db/client';
-import { organizations, platformAdministrators, users } from '@/db/schema';
+import crypto from 'node:crypto';
+import { db, sql, setTenantContext } from '@/db/client';
+import { auditLogs, organizations, platformAdministrators } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword } from '@/lib/password';
 import { createSessionRecordInTransaction, setSessionCookieForRecord } from '@/lib/session';
-import { recordAudit, recordAuditSync } from '@/lib/audit';
+import { recordAudit } from '@/lib/audit';
 import {
   checkLoginRateLimit,
   clearLoginFailures,
@@ -55,12 +56,16 @@ export async function loginAction(_prevState: LoginState, formData: FormData): P
     // Login has no authenticated tenant yet. The account lookup is therefore
     // the sole pre-auth identity-resolution query; once found, its persisted
     // organization_id becomes the only tenant context used below.
-    const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    const user = rows[0];
-    const organizationId = user?.organizationId || DEFAULT_ORGANIZATION_ID;
+    const identityRows = await sql<Array<{ user_id: string; organization_id: string; email: string; password_hash: string; password_salt: string; role: 'admin' | 'hr' | 'employee'; is_active: boolean }>>`
+      SELECT user_id, organization_id, email, password_hash, password_salt, role, is_active
+      FROM resolve_login_user(${email})
+    `;
+    const identity = identityRows[0];
+    const organizationId = identity?.organization_id || DEFAULT_ORGANIZATION_ID;
+    const user = identity ? { id: identity.user_id, organizationId: identity.organization_id, email: identity.email, passwordHash: identity.password_hash, passwordSalt: identity.password_salt, role: identity.role, isActive: identity.is_active } : undefined;
     const rateLimitKey = getLoginRateLimitKey(email, clientAddress, organizationId);
 
-    const rateStatus = checkLoginRateLimit(rateLimitKey, organizationId);
+    const rateStatus = await checkLoginRateLimit(rateLimitKey, organizationId);
     if (!rateStatus.allowed) {
       await recordFailedAttempt(rateLimitKey, organizationId, true);
       return { error: 'Too many sign-in attempts. Please try again later.' };
@@ -68,14 +73,14 @@ export async function loginAction(_prevState: LoginState, formData: FormData): P
 
     // Deliberately generic error message - do not reveal whether the email exists.
     if (!user || !user.isActive) {
-      recordFailedLogin(rateLimitKey, organizationId);
+      await recordFailedLogin(rateLimitKey, organizationId);
       await recordFailedAttempt(rateLimitKey, organizationId, false);
       return { error: genericError };
     }
 
     const valid = verifyPassword(password, user.passwordHash, user.passwordSalt);
     if (!valid) {
-      const result = recordFailedLogin(rateLimitKey, organizationId);
+      const result = await recordFailedLogin(rateLimitKey, organizationId);
       await recordFailedAttempt(rateLimitKey, organizationId, !result.allowed);
       return result.allowed ? { error: genericError } : { error: 'Too many sign-in attempts. Please try again later.' };
     }
@@ -87,15 +92,13 @@ export async function loginAction(_prevState: LoginState, formData: FormData): P
       return { error: 'Your organization is currently suspended. Please contact the platform administrator.' };
     }
 
-    clearLoginFailures(rateLimitKey, organizationId);
-    const sessionRecord = withSqliteTransactionSync(() => {
-      const record = createSessionRecordInTransaction(user.id, organizationId);
-      recordAuditSync({
-        organizationId,
-        actorUserId: user.id,
-        action: 'login',
-        entityType: 'user',
-        entityId: user.id
+    await clearLoginFailures(rateLimitKey, organizationId);
+    const sessionRecord = await db.transaction(async (tx) => {
+      await setTenantContext(tx, organizationId);
+      const record = await createSessionRecordInTransaction(tx, user.id, organizationId);
+      await tx.insert(auditLogs).values({
+        id: crypto.randomUUID(),
+        organizationId, actorUserId: user.id, action: 'login', entityType: 'user', entityId: user.id
       });
       return record;
     });

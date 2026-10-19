@@ -1,11 +1,12 @@
 'use server';
 
-import { db, sqlite, withSqliteTransactionSync } from '@/db/client';
-import { users } from '@/db/schema';
+import crypto from 'node:crypto';
+import { db, setTenantContext } from '@/db/client';
+import { auditLogs, sessions, users } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { requireUserForAction } from '@/lib/auth';
 import { verifyPassword, hashPassword } from '@/lib/password';
-import { recordAudit, recordAuditSync } from '@/lib/audit';
+import { recordAudit } from '@/lib/audit';
 import { createSessionRecordInTransaction, destroyOtherSessionsForUser, setSessionCookieForRecord } from '@/lib/session';
 
 export type ChangePasswordState = { error: string | null; success: boolean };
@@ -44,21 +45,50 @@ export async function changePasswordAction(
   const { hash, salt } = hashPassword(newPassword);
   const now = new Date().toISOString();
 
-  const newSession = withSqliteTransactionSync(() => {
-    const sessionRecord = createSessionRecordInTransaction(user.id, user.organizationId);
+  const newSession = await db.transaction(async (tx) => {
+    await setTenantContext(tx, user.organizationId);
+
     // Password rotation invalidates every pre-existing session, including the
-    // current one. The transaction immediately creates the replacement.
-    const deleteStatement = `DELETE FROM sessions WHERE organization_id = ? AND user_id = ? AND id <> ?`;
-    // Keep the replacement session while removing all old sessions.
-    sqlite.prepare(deleteStatement).run(user.organizationId, user.id, sessionRecord.id);
-    sqlite
-      .prepare(`
-        UPDATE users
-        SET password_hash = ?, password_salt = ?, updated_at = ?
-        WHERE organization_id = ? AND id = ?
-      `)
-      .run(hash, salt, now, user.organizationId, user.id);
-    recordAuditSync({ organizationId: user.organizationId, actorUserId: user.id, action: 'password_changed', entityType: 'user', entityId: user.id });
+    // current one. Delete all old sessions before creating the replacement,
+    // keeping the entire rotation atomic inside this transaction.
+    await tx
+      .delete(sessions)
+      .where(
+        and(
+          eq(sessions.organizationId, user.organizationId),
+          eq(sessions.userId, user.id)
+        )
+      );
+
+    const sessionRecord = await createSessionRecordInTransaction(
+      tx,
+      user.id,
+      user.organizationId
+    );
+
+    await tx
+      .update(users)
+      .set({
+        passwordHash: hash,
+        passwordSalt: salt,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(users.organizationId, user.organizationId),
+          eq(users.id, user.id)
+        )
+      );
+
+    await tx.insert(auditLogs).values({
+      id: crypto.randomUUID(),
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      action: 'password_changed',
+      entityType: 'user',
+      entityId: user.id
+    });
+
     return sessionRecord;
   });
 

@@ -11,7 +11,27 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syj_hcm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syj_hcm"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://app_runtime:app_runtime@localhost:5432/syj_hcm
+      DATABASE_RUNTIME_URL: postgresql://app_runtime:app_runtime@localhost:5432/syj_hcm
+      DATABASE_MIGRATION_URL: postgresql://postgres:postgres@localhost:5432/syj_hcm
+      DATABASE_RUNTIME_ROLE: app_runtime
+      SESSION_SECRET: ci-session-secret-012345678901234567890123456789
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,17 +42,70 @@ jobs:
           node-version: 24.18.0
           cache: npm
 
+      - name: Prepare PostgreSQL runtime role
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d syj_hcm -v ON_ERROR_STOP=1 -c "CREATE ROLE app_runtime LOGIN PASSWORD 'app_runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d syj_hcm -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE syj_hcm TO app_runtime;"
+
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Database migrations
+        run: npm run db:migrate
 
-      - name: Tests
-        run: npm test
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck -- --pretty false 2>&1 | tee typecheck.log
+
+      - name: Upload typecheck diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          if-no-files-found: ignore
+
+      - name: Lint
+        run: npm run lint
+
+      - name: PostgreSQL foundation tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:foundation 2>&1 | tee postgres-foundation-test.log
+
+      - name: Upload PostgreSQL foundation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-foundation-test-diagnostics
+          path: postgres-foundation-test.log
+          if-no-files-found: ignore
+
+      - name: Full PostgreSQL test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee full-postgres-test.log
+
+      - name: Upload full PostgreSQL test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-postgres-test-diagnostics
+          path: full-postgres-test.log
+          if-no-files-found: ignore
+
+      - name: SQLite runtime inventory
+        run: bash scripts/check-no-sqlite-runtime.sh
 
       - name: Production build
         run: npm run build
+
+      - name: PostgreSQL backup and restore drill
+        run: bash scripts/backup-restore-drill.sh
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
