@@ -1,27 +1,64 @@
-import { DatabaseSync } from 'node:sqlite';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import postgres from 'postgres';
+import { randomUUID } from 'node:crypto';
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const migrationUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+if (!migrationUrl) {
+  throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL must be configured for PostgreSQL tests.');
+}
 
-const tempPath = path.join(os.tmpdir(), `syj-hcm-test-${process.pid}-${Date.now()}.db`);
-process.env.DATABASE_PATH = tempPath;
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-secret-only-used-in-tests-not-real';
 
-const setupClient = new DatabaseSync(tempPath);
-setupClient.exec('PRAGMA foreign_keys = ON;');
-const migrationFiles = fs
-  .readdirSync(path.resolve(currentDir, '../../drizzle'))
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
-for (const file of migrationFiles) {
-  const sql = fs.readFileSync(path.resolve(currentDir, '../../drizzle', file), 'utf-8');
-  setupClient.exec(sql);
-}
-setupClient.close();
+const admin = postgres(migrationUrl, { max: 1, connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT || 10) });
+const parsed = new URL(migrationUrl);
+const sourceDatabase = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+const testDatabase = `syj_hcm_test_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
-// Import side effect only - importing src/db/client after this point will
-// pick up the DATABASE_PATH we just set and connect to this temp file,
-// which already has the real schema applied.
+await admin`
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${process.env.DATABASE_RUNTIME_ROLE || 'app_runtime'}) THEN
+      CREATE ROLE ${postgres.unsafe(JSON.stringify(process.env.DATABASE_RUNTIME_ROLE || 'app_runtime'))} LOGIN PASSWORD ${postgres.unsafe(JSON.stringify(process.env.DATABASE_RUNTIME_ROLE || 'app_runtime'))} NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+  END
+  $$
+`;
+
+await admin.unsafe(`CREATE DATABASE "${testDatabase.replaceAll('"', '""')}" TEMPLATE template0`);
+await admin.end({ timeout: 5 });
+
+const testMigrationUrl = new URL(migrationUrl);
+testMigrationUrl.pathname = `/${testDatabase}`;
+process.env.DATABASE_MIGRATION_URL = testMigrationUrl.toString();
+process.env.DATABASE_URL = testMigrationUrl.toString().replace(
+  decodeURIComponent(testMigrationUrl.username),
+  encodeURIComponent(process.env.DATABASE_RUNTIME_ROLE || 'app_runtime'),
+);
+
+const { execFileSync } = await import('node:child_process');
+execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate.ts'], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: 'inherit',
+});
+
+const cleanup = async () => {
+  const cleanupClient = postgres(migrationUrl, { max: 1, connect_timeout: 10 });
+  try {
+    await cleanupClient.unsafe(`DROP DATABASE IF EXISTS "${testDatabase.replaceAll('"', '""')}"`);
+  } finally {
+    await cleanupClient.end({ timeout: 5 });
+  }
+};
+
+process.once('exit', () => {
+  // Node's synchronous exit hook cannot await postgres.js cleanup. The test
+  // database is intentionally unique per worker; normal test completion is
+  // cleaned by the explicit SIGINT/SIGTERM handlers below.
+});
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, async () => {
+    await cleanup();
+    process.exit(0);
+  });
+}
