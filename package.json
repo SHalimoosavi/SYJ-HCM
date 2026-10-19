@@ -13,6 +13,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:import-sqlite": "tsx scripts/migrate-sqlite-to-postgres.ts",
+    "db:backup-drill": "bash scripts/backup-restore-drill.sh",
     "test": "node --import tsx --test --test-reporter=spec tests/*.test.ts",
     "platform:grant-admin": "tsx scripts/grant-platform-admin.ts",
     "test:foundation": "node --import tsx --test --test-reporter=spec tests/postgres-foundation.test.ts"
@@ -33,7 +34,6 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.7",
     "postcss": "^8.5.28",
-    "tailwindcss": "^3.4.13",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3"
   },
