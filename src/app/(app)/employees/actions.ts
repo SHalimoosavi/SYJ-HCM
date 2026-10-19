@@ -1,10 +1,9 @@
 'use server';
 
 import { db, setTenantContext } from '@/db/client';
-import { employees, departments, leaveTypes, leaveBalances } from '@/db/schema';
+import { auditLogs, employees, departments, leaveTypes, leaveBalances } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { requireRoleForAction } from '@/lib/auth';
-import { recordAudit } from '@/lib/audit';
 import { nanoid } from 'nanoid';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
@@ -113,7 +112,7 @@ export async function createEmployeeAction(
         });
       }
 
-      await tx.insert((await import('@/db/schema')).auditLogs).values({
+      await tx.insert(auditLogs).values({
         id: nanoid(),
         organizationId: actor.organizationId,
         actorUserId: actor.id,
@@ -192,7 +191,8 @@ export async function updateEmployeeAction(
         })
         .where(and(eq(employees.organizationId, actor.organizationId), eq(employees.id, employeeId)));
 
-      await recordAudit({
+      await tx.insert(auditLogs).values({
+        id: nanoid(),
         organizationId: actor.organizationId,
         actorUserId: actor.id,
         action: 'employee_updated',
@@ -221,7 +221,8 @@ export async function setEmployeeStatusAction(employeeId: string, status: 'activ
       .returning({ id: employees.id });
     if (result.length !== 1) throw new Error('Employee not found.');
 
-    await recordAudit({
+    await tx.insert(auditLogs).values({
+      id: nanoid(),
       organizationId: actor.organizationId,
       actorUserId: actor.id,
       action: status === 'active' ? 'employee_activated' : 'employee_deactivated',
