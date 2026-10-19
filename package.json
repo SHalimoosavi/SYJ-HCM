@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node --env-file-if-exists=.env --import tsx scripts/start.ts",
-    "lint": "next lint",
+    "lint": "tsx scripts/lint.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
@@ -34,6 +34,7 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.7",
     "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.13",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3"
   },
