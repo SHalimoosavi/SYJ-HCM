@@ -24,17 +24,17 @@ test('SQLite to PostgreSQL importer is read-only and safely rerunnable', async()
   const run=async()=>execFileAsync(process.execPath,['--import','tsx','scripts/migrate-sqlite-to-postgres.ts'],{env:{...process.env,SQLITE_SOURCE_PATH:sourcePath,SQLITE_IMPORT_TABLES:'organizations',DATABASE_MIGRATION_URL:databaseUrl}});
   try{
     const first=await run();
-    const firstReport=JSON.parse(first.stdout) as {report:Array<{table:string;source:number;inserted:number;skipped:number;rejected:number}>};
+    const firstReport=JSON.parse(first.stdout) as {report:Array<{table:string;source:number;inserted:number;skipped:number;rejected:number;errors:string[]}>};
     assert.deepEqual(firstReport.report,[{table:'organizations',source:1,inserted:1,skipped:0,rejected:0,errors:[]}]);
 
     const second=await run();
-    const secondReport=JSON.parse(second.stdout) as {report:Array<{table:string;source:number;inserted:number;skipped:number;rejected:number}>};
+    const secondReport=JSON.parse(second.stdout) as {report:Array<{table:string;source:number;inserted:number;skipped:number;rejected:number;errors:string[]}>};
     assert.deepEqual(secondReport.report,[{table:'organizations',source:1,inserted:0,skipped:1,rejected:0,errors:[]}]);
 
     const verify=postgres(databaseUrl,{max:1});
     try{
       const rows=await verify<{id:string;name:string;slug:string;status:string}[]>`SELECT id,name,slug,status FROM organizations WHERE id=${organizationId}`;
-      assert.deepEqual(rows,[{id:organizationId,name:'Migration Drill',slug:'migration-drill',status:'active'}]);
+      assert.deepEqual(Array.from(rows),[{id:organizationId,name:'Migration Drill',slug:'migration-drill',status:'active'}]);
     }finally{await verify`DELETE FROM organizations WHERE id=${organizationId}`;await verify.end({timeout:5});}
   }finally{
     await rm(tempDir,{recursive:true,force:true});
