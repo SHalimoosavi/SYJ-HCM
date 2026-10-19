@@ -7,25 +7,28 @@ import { employees, attendanceRecords } from '../src/db/schema';
 import { nanoid } from 'nanoid';
 import { DEFAULT_ORGANIZATION_ID } from '../src/lib/tenant';
 
-async function makeEmployee(tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) {
+async function makeEmployee() {
   const id = nanoid();
-  await tx.insert(employees).values({
-    id,
-    organizationId: DEFAULT_ORGANIZATION_ID,
-    employeeCode: `TEST-${id.slice(0, 6)}`,
-    firstName: 'Test',
-    lastName: 'Employee',
-    workEmail: `${id}@test.local`,
-    dateOfJoining: '2026-01-01',
-    designation: 'Tester'
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+    await tx.insert(employees).values({
+      id,
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      employeeCode: `TEST-${id.slice(0, 6)}`,
+      firstName: 'Test',
+      lastName: 'Employee',
+      workEmail: `${id}@test.local`,
+      dateOfJoining: '2026-01-01',
+      designation: 'Tester'
+    });
   });
   return id;
 }
 
 test('a single attendance record can be created for a given day', async () => {
+  const employeeId = await makeEmployee();
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
-    const employeeId = await makeEmployee(tx);
     await tx.insert(attendanceRecords).values({
       id: nanoid(),
       organizationId: DEFAULT_ORGANIZATION_ID,
@@ -41,9 +44,9 @@ test('a single attendance record can be created for a given day', async () => {
 });
 
 test('the database rejects a second attendance record for the same employee and day', async () => {
+  const employeeId = await makeEmployee();
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
-    const employeeId = await makeEmployee(tx);
     await tx.insert(attendanceRecords).values({
       id: nanoid(),
       organizationId: DEFAULT_ORGANIZATION_ID,
@@ -67,9 +70,9 @@ test('the database rejects a second attendance record for the same employee and 
 });
 
 test('the same employee can have separate records on different days', async () => {
+  const employeeId = await makeEmployee();
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
-    const employeeId = await makeEmployee(tx);
     await tx.insert(attendanceRecords).values({
       id: nanoid(),
       organizationId: DEFAULT_ORGANIZATION_ID,
