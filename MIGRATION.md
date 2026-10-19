@@ -1,50 +1,28 @@
-# SYJ-HCM PostgreSQL Foundation Migration
+# SYJ-HCM PostgreSQL Application Migration
 
 ## Baseline
 
 - Release: `v0.14.0-alpha`
 - Commit: `7fd35f905b8fa5ad9a6ad0473858b138e745fd4f`
-- Target version: `0.14.1-alpha`
+- PostgreSQL foundation: `v0.14.1-alpha`
 - Historical SQLite migrations: `drizzle/0000_init.sql` through `drizzle/0009_phase2_5_offer_management.sql`
-- PostgreSQL migration path: `drizzle/postgres/0000` through `0010_postgres_foundation.sql`
+- PostgreSQL application migrations: `drizzle/postgres/0000` through `0011_public_recruitment_bootstrap.sql`
 
-The original SQLite migration files are preserved unchanged. PostgreSQL never executes them.
+The original SQLite migration files are preserved as historical source artifacts. They are not application runtime migrations.
+
+## Architecture
+
+Application requests use PostgreSQL through Drizzle/Postgres.js. Tenant identity is resolved from authenticated server-side session context. Tenant-scoped transactions call `SET LOCAL app.current_org_id = <organizationId>` before protected queries. PostgreSQL RLS is defense-in-depth; application-layer authorization remains mandatory.
+
+The runtime role must be `NOBYPASSRLS` and must not own tenant tables. `DATABASE_MIGRATION_URL` is reserved for the schema/migration owner.
 
 ## Prerequisites
 
-- PostgreSQL 16 recommended/reference version.
+- PostgreSQL 16.
 - Node.js >= 22.5.
 - npm.
-- Two database roles are strongly recommended:
-  - schema/migration owner, used by `DATABASE_MIGRATION_URL`;
-  - application runtime role, used by `DATABASE_URL`, with `NOBYPASSRLS` and not owning the tables.
-- The runtime role should be named `app_runtime` unless `DATABASE_RUNTIME_ROLE` is changed.
-
-## Local PostgreSQL example
-
-```yaml
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: syj_hcm
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d syj_hcm"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-```
-
-Create a runtime role before migrations:
-
-```sql
-CREATE ROLE app_runtime LOGIN PASSWORD 'change-me' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-GRANT CONNECT ON DATABASE syj_hcm TO app_runtime;
-```
+- Migration/schema owner for `DATABASE_MIGRATION_URL`.
+- Runtime role for `DATABASE_URL`, with `NOBYPASSRLS`.
 
 ## Environment
 
@@ -56,11 +34,7 @@ SESSION_SECRET=replace-with-a-long-random-value
 ALLOW_DEV_SEED=false
 ```
 
-`DATABASE_MIGRATION_URL` must be owned by the schema/migration role so the security-definer bootstrap functions are not owned by the runtime role.
-
-## Apply
-
-From the repository root:
+## Apply migrations
 
 ```bash
 npm ci
@@ -70,58 +44,83 @@ npm test
 npm run build
 ```
 
-The hand-rolled runner creates/uses `__migrations`, applies PostgreSQL files in lexical filename order, and uses a PostgreSQL advisory transaction lock. The sequence is the ten historical phases (`0000`–`0009`) followed by `0010_postgres_foundation.sql`.
+The migration runner records applied migrations in `__migrations`, applies PostgreSQL migration files in lexical order, and protects the migration transaction with an advisory lock. Historical `0000`–`0009` SQLite migrations are not executed by the PostgreSQL runtime.
+
+## SQLite → PostgreSQL data portability
+
+The source database is opened read-only by `scripts/migrate-sqlite-to-postgres.ts`.
+
+```bash
+SQLITE_SOURCE_PATH=/secure/legacy/app.db \
+DATABASE_MIGRATION_URL=postgresql://postgres:...@localhost:5432/syj_hcm \
+npm run db:import-sqlite -- --dry-run
+
+SQLITE_SOURCE_PATH=/secure/legacy/app.db \
+DATABASE_MIGRATION_URL=postgresql://postgres:...@localhost:5432/syj_hcm \
+npm run db:import-sqlite
+```
+
+The importer validates the source/destination schema, converts booleans/timestamps/numerics, preserves source IDs, processes foreign-key-sensitive tables in a deterministic order, reports source/inserted/skipped/rejected counts, and aborts the destination transaction when a row is rejected. `SQLITE_IMPORT_TABLES` can restrict an import for controlled drills.
+
+The source SQLite file is never modified or deleted.
+
+## Public recruitment bootstrap
+
+Anonymous publication lookup uses the narrowly scoped `resolve_job_publication(slug)` `SECURITY DEFINER` function. It returns only publication/job metadata required by the public careers/application flow. The function pins `search_path` to `public, pg_temp`, is revoked from `PUBLIC`, and is granted explicitly to the configured runtime role.
+
+Public application writes establish tenant context inside a transaction before creating candidates, applications, history, activities, audit records, and rate-limit state.
 
 ## RLS verification
 
-Connect as the actual `app_runtime` role, not the migration owner/superuser, and verify:
+Use the actual runtime role, not the migration owner:
 
 ```sql
-SELECT * FROM employees;
-SELECT * FROM resolve_session('a-real-session-id');
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname = current_user;
 
 BEGIN;
 SELECT set_config('app.current_org_id', 'org_a', true);
 SELECT organization_id, id FROM employees;
 COMMIT;
 
-SELECT * FROM employees;
+SELECT organization_id, id FROM employees;
 ```
 
-The first and final tenant query must return zero rows without a tenant context. The scoped query must return only `org_a` rows. Repeat with `org_b` and verify there is no connection-pool bleed.
+Without a tenant context, protected tenant queries must return zero rows. Repeating the transaction with `org_b` must never expose `org_a`. Pool reuse and concurrent requests must preserve this isolation because the context is transaction-local.
 
-Verify the runtime role has `NOBYPASSRLS` and is not the owner:
+## Authentication bootstrap
 
-```sql
-SELECT rolname, rolsuper, rolbypassrls
-FROM pg_roles
-WHERE rolname = current_user;
+- `resolve_login_user(text)` — minimal pre-auth account lookup.
+- `resolve_session(text)` — session cookie to server-side organization/user resolution.
+- `resolve_job_publication(text)` — anonymous published-career lookup.
+
+These bootstrap functions do not replace application authorization and do not accept a client-supplied organization ID as an authorization decision.
+
+## Backup and restore drill
+
+The repository includes:
+
+```bash
+npm run db:backup-drill
 ```
 
-## Bootstrap functions
+The drill creates a PostgreSQL custom-format backup with `pg_dump`, restores it into a clean temporary database using `pg_restore`, verifies the migration ledger and representative schema/RLS state, and removes the temporary database. The drill must be executed against a disposable validation database; do not run it against production without an approved operational window.
 
-- `resolve_login_user(text)` — minimal pre-auth account/password-verification lookup required because users are RLS-protected.
-- `resolve_session(text)` — session cookie → organization/user lookup before tenant context exists.
-- `resolve_job_publication(text)` — anonymous published-career slug → minimum public publication information.
+## CI release gate
 
-All three are `SECURITY DEFINER`, pin `search_path` to `public, pg_temp`, are explicitly revoked from `PUBLIC`, and are granted only to the configured runtime role when that role exists during migration.
+The PR workflow is the release gate. It installs locked dependencies, starts PostgreSQL 16, creates an `NOBYPASSRLS` runtime role, applies migrations, runs typecheck, lint, foundation tests, the complete test suite, production build, and dependency audit.
+
+A red or incomplete CI run means the PostgreSQL cutover is **not production-ready**.
 
 ## Rollback
 
-This foundation is additive to the repository and does not destroy the source SQLite database.
+1. Preserve an immutable copy of the v0.14.0-alpha source database and application release.
+2. Treat the PostgreSQL database as disposable until the cutover validation is complete.
+3. If a validation gate fails, stop the cutover and retain the failed PostgreSQL database for investigation.
+4. Never modify or delete the source SQLite database during portability work.
+5. Do not merge the migration PR while any required production gate is red.
 
-Before production adoption:
+## Current validation status
 
-1. Keep an immutable copy of the v0.14.0-alpha SQLite database and application release.
-2. Treat the PostgreSQL database as disposable until migration and application validation are complete.
-3. If PostgreSQL validation fails, stop the cutover and restore deployment configuration to the prior SQLite release.
-4. Do not run destructive SQL against the source SQLite database.
-5. Keep the failed PostgreSQL database available for investigation rather than overwriting it.
-
-A future production data-portability tool (Prompt B/data migration work) must take its own verified source backup before copying data.
-
-## Validation status for this build environment
-
-**PostgreSQL integration validation could not be executed in this environment.** No PostgreSQL server/client was available, and external npm registry access was unavailable, so `postgres` could not be installed here.
-
-Therefore this artifact does **not** claim successful PostgreSQL migration execution, RLS integration tests, typecheck, test-suite execution, or production build execution.
+This branch is still under PR #5 production validation. The repository must not claim a completed cutover until the complete CI workflow, PostgreSQL integration tests, tenant/RLS isolation tests, data-import drill, backup/restore drill, typecheck, lint, full test suite, production build, and dependency/security checks are green.
