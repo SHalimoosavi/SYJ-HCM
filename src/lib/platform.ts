@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import { db, setTenantContext } from '@/db/client';
-import { organizations, organizationSettings, platformAdministrators, platformAuditLogs, recruitmentStages, sessions, users } from '@/db/schema';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { auditLogs, organizations, organizationSettings, platformAdministrators, platformAuditLogs, recruitmentStages, sessions, users } from '@/db/schema';
+import { and, desc, eq } from 'drizzle-orm';
 import { hashPassword } from './password';
 import { ForbiddenError } from './auth';
 import type { CurrentUser } from './session';
@@ -46,10 +46,7 @@ export async function assertPlatformAdministrator(userId: string): Promise<void>
 }
 
 export async function recordPlatformAudit(params: { actorUserId: string | null; action: string; entityType: string; entityId: string; metadata?: Record<string, unknown> }): Promise<void> {
-  await db.insert(platformAuditLogs).values({
-    id: nanoid(), actorUserId: params.actorUserId, action: params.action, entityType: params.entityType,
-    entityId: params.entityId, metadata: params.metadata ? JSON.stringify(params.metadata) : null,
-  });
+  await db.insert(platformAuditLogs).values({ id: nanoid(), actorUserId: params.actorUserId, action: params.action, entityType: params.entityType, entityId: params.entityId, metadata: params.metadata ? JSON.stringify(params.metadata) : null });
 }
 
 export async function getPlatformOverview() {
@@ -80,7 +77,7 @@ export async function updateOrganizationConfigurationInTransaction(actor: Curren
     const existing = await tx.select({ organizationId: organizationSettings.organizationId }).from(organizationSettings).where(eq(organizationSettings.organizationId, actor.organizationId)).limit(1);
     if (!existing[0]) throw new Error('Organization configuration is not initialized.');
     await tx.update(organizationSettings).set({ timezone: input.timezone, locale: input.locale, dateFormat: input.dateFormat, weekStartDay: input.weekStartDay, updatedAt: new Date().toISOString() }).where(eq(organizationSettings.organizationId, actor.organizationId));
-    await tx.insert((await import('@/db/schema')).auditLogs).values({ id: nanoid(), organizationId: actor.organizationId, actorUserId: actor.id, action: 'organization_configuration_changed', entityType: 'organization_settings', entityId: actor.organizationId, metadata: JSON.stringify({ changedFields: ['timezone', 'locale', 'dateFormat', 'weekStartDay'] }) });
+    await tx.insert(auditLogs).values({ id: nanoid(), organizationId: actor.organizationId, actorUserId: actor.id, action: 'organization_configuration_changed', entityType: 'organization_settings', entityId: actor.organizationId, metadata: JSON.stringify({ changedFields: ['timezone', 'locale', 'dateFormat', 'weekStartDay'] }) });
   });
 }
 
@@ -92,11 +89,7 @@ export async function provisionOrganizationInTransaction(actor: CurrentUser, inp
   return db.transaction(async (tx) => {
     const existingSlug = await tx.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, slug)).limit(1); if (existingSlug[0]) throw new Error('That organization slug is already in use.');
     const existingEmail = await tx.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1); if (existingEmail[0]) throw new Error('That administrator email is already registered.');
-
-    const organizationId = `org_${nanoid(16)}`;
-    const adminUserId = `usr_${nanoid(16)}`;
-    const { hash, salt } = hashPassword(input.adminPassword);
-
+    const organizationId = `org_${nanoid(16)}`; const adminUserId = `usr_${nanoid(16)}`; const { hash, salt } = hashPassword(input.adminPassword);
     await tx.insert(organizations).values({ id: organizationId, name, slug, status: 'active' });
     await tx.insert(organizationSettings).values({ organizationId });
     await tx.insert(users).values({ id: adminUserId, organizationId, email, passwordHash: hash, passwordSalt: salt, role: 'admin', isActive: true });
