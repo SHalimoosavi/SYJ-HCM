@@ -25,7 +25,7 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       DATABASE_URL: postgresql://app_runtime:app_runtime@localhost:5432/syj_hcm
       DATABASE_MIGRATION_URL: postgresql://postgres:postgres@localhost:5432/syj_hcm
@@ -66,8 +66,14 @@ jobs:
           path: typecheck.log
           if-no-files-found: ignore
 
+      - name: Lint
+        run: npm run lint
+
       - name: PostgreSQL foundation tests
         run: npm run test:foundation
+
+      - name: Full PostgreSQL test suite
+        run: npm test
 
       - name: Production build
         run: npm run build
