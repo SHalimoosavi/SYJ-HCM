@@ -1,7 +1,7 @@
 import '../tests/helpers/setup-test-db';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { db } from '../src/db/client';
+import { db, setTenantContext } from '../src/db/client';
 import { employees, leaveTypes, leaveBalances, leaveRequests } from '../src/db/schema';
 import { hasOverlappingLeave, getRemainingBalance } from '../src/lib/leave-rules';
 import { nanoid } from 'nanoid';
@@ -9,23 +9,42 @@ import { DEFAULT_ORGANIZATION_ID } from '../src/lib/tenant';
 
 async function makeEmployee() {
   const id = nanoid();
-  await db.insert(employees).values({
-    id,
-    organizationId: DEFAULT_ORGANIZATION_ID,
-    employeeCode: `TEST-${id.slice(0, 6)}`,
-    firstName: 'Test',
-    lastName: 'Employee',
-    workEmail: `${id}@test.local`,
-    dateOfJoining: '2026-01-01',
-    designation: 'Tester'
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+    await tx.insert(employees).values({
+      id,
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      employeeCode: `TEST-${id.slice(0, 6)}`,
+      firstName: 'Test',
+      lastName: 'Employee',
+      workEmail: `${id}@test.local`,
+      dateOfJoining: '2026-01-01',
+      designation: 'Tester'
+    });
   });
   return id;
 }
 
 async function makeLeaveType(annualQuota: number) {
   const id = nanoid();
-  await db.insert(leaveTypes).values({ id, organizationId: DEFAULT_ORGANIZATION_ID, name: `Test Leave ${id.slice(0, 4)}`, annualQuota, isPaid: true });
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+    await tx.insert(leaveTypes).values({
+      id,
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      name: `Test Leave ${id.slice(0, 4)}`,
+      annualQuota,
+      isPaid: true
+    });
+  });
   return id;
+}
+
+async function createLeaveRequest(values: typeof leaveRequests.$inferInsert) {
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+    await tx.insert(leaveRequests).values(values);
+  });
 }
 
 test('no overlap when employee has no existing leave', async () => {
@@ -38,7 +57,7 @@ test('detects an overlapping pending request', async () => {
   const employeeId = await makeEmployee();
   const leaveTypeId = await makeLeaveType(18);
 
-  await db.insert(leaveRequests).values({
+  await createLeaveRequest({
     id: nanoid(),
     organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
@@ -57,7 +76,7 @@ test('does not flag a non-overlapping request as overlapping', async () => {
   const employeeId = await makeEmployee();
   const leaveTypeId = await makeLeaveType(18);
 
-  await db.insert(leaveRequests).values({
+  await createLeaveRequest({
     id: nanoid(),
     organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
@@ -76,7 +95,7 @@ test('ignores cancelled/rejected requests when checking overlap', async () => {
   const employeeId = await makeEmployee();
   const leaveTypeId = await makeLeaveType(18);
 
-  await db.insert(leaveRequests).values({
+  await createLeaveRequest({
     id: nanoid(),
     organizationId: DEFAULT_ORGANIZATION_ID,
     employeeId,
@@ -96,7 +115,18 @@ test('remaining balance reflects allocated minus used', async () => {
   const leaveTypeId = await makeLeaveType(18);
   const year = 2026;
 
-  await db.insert(leaveBalances).values({ id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId, leaveTypeId, year, allocated: 18, used: 5 });
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+    await tx.insert(leaveBalances).values({
+      id: nanoid(),
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      employeeId,
+      leaveTypeId,
+      year,
+      allocated: 18,
+      used: 5
+    });
+  });
 
   const balance = await getRemainingBalance(DEFAULT_ORGANIZATION_ID, employeeId, leaveTypeId, year);
   assert.ok(balance);
