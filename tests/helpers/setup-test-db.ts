@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { after } from 'node:test';
 
 const migrationUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
 if (!migrationUrl) {
@@ -59,9 +60,11 @@ const cleanup = () => {
   }
 };
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => {
+after(async () => {
+  try {
+    const { closeDatabase } = await import('../../src/db/client');
+    await closeDatabase();
+  } finally {
     cleanup();
-    process.exit(0);
-  });
-}
+  }
+});
