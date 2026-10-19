@@ -12,6 +12,7 @@ const runtimeRole = process.env.DATABASE_RUNTIME_ROLE || 'app_runtime';
 const runtimePassword = process.env.DATABASE_RUNTIME_PASSWORD || 'app_runtime';
 const testDatabase = `syj_hcm_test_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
+const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 const psql = (args: string[]) => {
   execFileSync('psql', [migrationUrl, '-v', 'ON_ERROR_STOP=1', ...args], {
@@ -22,7 +23,7 @@ const psql = (args: string[]) => {
 
 const roleExists = execFileSync(
   'psql',
-  [migrationUrl, '-Atqc', 'SELECT 1 FROM pg_roles WHERE rolname = current_setting(\'app.test_runtime_role\', true) LIMIT 1'],
+  [migrationUrl, '-Atqc', `SELECT 1 FROM pg_roles WHERE rolname = ${quoteLiteral(runtimeRole)} LIMIT 1`],
   {
     env: { ...process.env, PGAPPNAME: 'syj-hcm-test-bootstrap', PGTZ: 'UTC' },
     encoding: 'utf8',
@@ -30,7 +31,7 @@ const roleExists = execFileSync(
 ).trim();
 
 if (!roleExists) {
-  psql(['-c', `CREATE ROLE ${quoteIdentifier(runtimeRole)} LOGIN PASSWORD '${runtimePassword.replaceAll("'", "''")}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`]);
+  psql(['-c', `CREATE ROLE ${quoteIdentifier(runtimeRole)} LOGIN PASSWORD ${quoteLiteral(runtimePassword)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`]);
 }
 
 psql(['-c', `CREATE DATABASE ${quoteIdentifier(testDatabase)} TEMPLATE template0`]);
