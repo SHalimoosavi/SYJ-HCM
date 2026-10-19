@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 20
     env:
       DATABASE_URL: postgresql://app_runtime:app_runtime@localhost:5432/syj_hcm
+      DATABASE_RUNTIME_URL: postgresql://app_runtime:app_runtime@localhost:5432/syj_hcm
       DATABASE_MIGRATION_URL: postgresql://postgres:postgres@localhost:5432/syj_hcm
       DATABASE_RUNTIME_ROLE: app_runtime
       SESSION_SECRET: ci-session-secret-012345678901234567890123456789
