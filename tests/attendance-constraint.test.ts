@@ -30,14 +30,9 @@ test('a single attendance record can be created for a given day', async () => {
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
     await tx.insert(attendanceRecords).values({
-      id: nanoid(),
-      organizationId: DEFAULT_ORGANIZATION_ID,
-      employeeId,
-      workDate: '2026-09-09',
-      clockInAt: new Date().toISOString(),
-      status: 'present'
+      id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId,
+      workDate: '2026-09-09', clockInAt: new Date().toISOString(), status: 'present'
     });
-
     const rows = await tx.select().from(attendanceRecords).where(eq(attendanceRecords.organizationId, DEFAULT_ORGANIZATION_ID));
     assert.equal(rows.filter((r) => r.employeeId === employeeId).length, 1);
   });
@@ -48,25 +43,23 @@ test('the database rejects a second attendance record for the same employee and 
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
     await tx.insert(attendanceRecords).values({
-      id: nanoid(),
-      organizationId: DEFAULT_ORGANIZATION_ID,
-      employeeId,
-      workDate: '2026-09-09',
-      clockInAt: new Date().toISOString(),
-      status: 'present'
-    });
-
-    await assert.rejects(async () => {
-      await tx.insert(attendanceRecords).values({
-        id: nanoid(),
-        organizationId: DEFAULT_ORGANIZATION_ID,
-        employeeId,
-        workDate: '2026-09-09',
-        clockInAt: new Date().toISOString(),
-        status: 'present'
-      });
+      id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId,
+      workDate: '2026-09-09', clockInAt: new Date().toISOString(), status: 'present'
     });
   });
+
+  // A PostgreSQL statement error aborts its transaction. Keep the expected
+  // constraint violation in its own transaction so the assertion observes the
+  // database error rather than a poisoned outer transaction.
+  await assert.rejects(async () => {
+    await db.transaction(async (tx) => {
+      await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
+      await tx.insert(attendanceRecords).values({
+        id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId,
+        workDate: '2026-09-09', clockInAt: new Date().toISOString(), status: 'present'
+      });
+    });
+  }, /unique|attendance_employee_date_idx/i);
 });
 
 test('the same employee can have separate records on different days', async () => {
@@ -74,22 +67,13 @@ test('the same employee can have separate records on different days', async () =
   await db.transaction(async (tx) => {
     await setTenantContext(tx, DEFAULT_ORGANIZATION_ID);
     await tx.insert(attendanceRecords).values({
-      id: nanoid(),
-      organizationId: DEFAULT_ORGANIZATION_ID,
-      employeeId,
-      workDate: '2026-09-09',
-      clockInAt: new Date().toISOString(),
-      status: 'present'
+      id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId,
+      workDate: '2026-09-09', clockInAt: new Date().toISOString(), status: 'present'
     });
     await tx.insert(attendanceRecords).values({
-      id: nanoid(),
-      organizationId: DEFAULT_ORGANIZATION_ID,
-      employeeId,
-      workDate: '2026-09-10',
-      clockInAt: new Date().toISOString(),
-      status: 'present'
+      id: nanoid(), organizationId: DEFAULT_ORGANIZATION_ID, employeeId,
+      workDate: '2026-09-10', clockInAt: new Date().toISOString(), status: 'present'
     });
-
     const rows = await tx.select().from(attendanceRecords).where(eq(attendanceRecords.organizationId, DEFAULT_ORGANIZATION_ID));
     assert.equal(rows.filter((r) => r.employeeId === employeeId).length, 2);
   });
