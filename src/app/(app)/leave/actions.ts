@@ -1,8 +1,9 @@
 'use server';
 
-import { sqlite, withSqliteTransactionSync } from '@/db/client';
+import { db, setTenantContext } from '@/db/client';
+import { employees, leaveBalances, leaveRequests, leaveTypes, auditLogs } from '@/db/schema';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { requireUserForAction, requireRoleForAction, ForbiddenError } from '@/lib/auth';
-import { recordAuditSync } from '@/lib/audit';
 import { validateDateRange, countInclusiveDays } from '@/lib/leave-rules';
 import { canCancelLeave } from '@/lib/authorization';
 import { nanoid } from 'nanoid';
@@ -33,61 +34,71 @@ export async function applyLeaveAction(_prevState: LeaveFormState, formData: For
   const id = nanoid();
 
   try {
-    withSqliteTransactionSync(() => {
-      const overlap = sqlite
-        .prepare(`
-          SELECT 1
-          FROM leave_requests
-          WHERE organization_id = ?
-            AND employee_id = ?
-            AND status IN ('pending', 'approved')
-            AND start_date <= ?
-            AND end_date >= ?
-          LIMIT 1
-        `)
-        .get(user.organizationId, user.employeeId, endDate, startDate);
+    await db.transaction(async (tx) => {
+      await setTenantContext(tx, user.organizationId);
 
-      if (overlap) {
+      const overlap = await tx
+        .select({ id: leaveRequests.id })
+        .from(leaveRequests)
+        .where(and(
+          eq(leaveRequests.organizationId, user.organizationId),
+          eq(leaveRequests.employeeId, user.employeeId),
+          sql`${leaveRequests.status} in ('pending', 'approved')`,
+          sql`${leaveRequests.startDate} <= ${endDate}`,
+          sql`${leaveRequests.endDate} >= ${startDate}`,
+        ))
+        .limit(1);
+      if (overlap[0]) {
         throw new Error('This date range overlaps with an existing pending or approved leave request.');
       }
 
-      const leaveType = sqlite
-        .prepare('SELECT 1 FROM leave_types WHERE organization_id = ? AND id = ? LIMIT 1')
-        .get(user.organizationId, leaveTypeId);
-      if (!leaveType) throw new Error('Selected leave type is not part of your organization.');
+      const leaveType = await tx
+        .select({ id: leaveTypes.id })
+        .from(leaveTypes)
+        .where(and(eq(leaveTypes.organizationId, user.organizationId), eq(leaveTypes.id, leaveTypeId)))
+        .limit(1);
+      if (!leaveType[0]) throw new Error('Selected leave type is not part of your organization.');
 
-      const balance = sqlite
-        .prepare(`
-          SELECT allocated, used
-          FROM leave_balances
-          WHERE organization_id = ? AND employee_id = ? AND leave_type_id = ? AND year = ?
-          LIMIT 1
-        `)
-        .get(user.organizationId, user.employeeId, leaveTypeId, year) as { allocated: number; used: number } | undefined;
+      const balance = await tx
+        .select({ allocated: leaveBalances.allocated, used: leaveBalances.used })
+        .from(leaveBalances)
+        .where(and(
+          eq(leaveBalances.organizationId, user.organizationId),
+          eq(leaveBalances.employeeId, user.employeeId),
+          eq(leaveBalances.leaveTypeId, leaveTypeId),
+          eq(leaveBalances.year, year),
+        ))
+        .limit(1);
+      const currentBalance = balance[0];
 
-      if (!balance || balance.allocated - balance.used < days) {
+      if (!currentBalance || currentBalance.allocated - currentBalance.used < days) {
         throw new Error(
-          balance
-            ? `Insufficient leave balance. You have ${balance.allocated - balance.used} day(s) remaining, but requested ${days}.`
+          currentBalance
+            ? `Insufficient leave balance. You have ${currentBalance.allocated - currentBalance.used} day(s) remaining, but requested ${days}.`
             : 'No leave balance found for this leave type this year.'
         );
       }
 
-      sqlite
-        .prepare(`
-          INSERT INTO leave_requests
-            (id, organization_id, employee_id, leave_type_id, start_date, end_date, days, reason, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-        `)
-        .run(id, user.organizationId, user.employeeId, leaveTypeId, startDate, endDate, days, reason);
+      await tx.insert(leaveRequests).values({
+        id,
+        organizationId: user.organizationId,
+        employeeId: user.employeeId,
+        leaveTypeId,
+        startDate,
+        endDate,
+        days,
+        reason,
+        status: 'pending',
+      });
 
-      recordAuditSync({
+      await tx.insert(auditLogs).values({
+        id: nanoid(),
         organizationId: user.organizationId,
         actorUserId: user.id,
         action: 'leave_requested',
         entityType: 'leave_request',
         entityId: id,
-        metadata: { days }
+        metadata: JSON.stringify({ days }),
       });
     });
   } catch (error) {
@@ -101,33 +112,44 @@ export async function applyLeaveAction(_prevState: LeaveFormState, formData: For
 export async function cancelLeaveAction(requestId: string): Promise<void> {
   const user = await requireUserForAction();
 
-  withSqliteTransactionSync(() => {
-    const request = sqlite
-      .prepare('SELECT organization_id, employee_id, status FROM leave_requests WHERE organization_id = ? AND id = ? LIMIT 1')
-      .get(user.organizationId, requestId) as { organization_id: string; employee_id: string; status: string } | undefined;
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, user.organizationId);
+
+    const requestRows = await tx
+      .select({ organizationId: leaveRequests.organizationId, employeeId: leaveRequests.employeeId, status: leaveRequests.status })
+      .from(leaveRequests)
+      .where(and(eq(leaveRequests.organizationId, user.organizationId), eq(leaveRequests.id, requestId)))
+      .limit(1);
+    const request = requestRows[0];
 
     if (!request) throw new Error('Leave request not found.');
-    if (request.organization_id !== user.organizationId) throw new ForbiddenError();
-    const targetEmployee = sqlite
-      .prepare('SELECT 1 FROM employees WHERE organization_id = ? AND id = ? LIMIT 1')
-      .get(user.organizationId, request.employee_id);
-    if (!targetEmployee) throw new ForbiddenError();
-    if (!canCancelLeave(user.role, user.employeeId, request.employee_id, user.organizationId, request.organization_id)) throw new ForbiddenError();
+    if (request.organizationId !== user.organizationId) throw new ForbiddenError();
+
+    const targetEmployee = await tx
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(eq(employees.organizationId, user.organizationId), eq(employees.id, request.employeeId)))
+      .limit(1);
+    if (!targetEmployee[0]) throw new ForbiddenError();
+    if (!canCancelLeave(user.role, user.employeeId, request.employeeId, user.organizationId, request.organizationId)) throw new ForbiddenError();
     if (request.status !== 'pending') throw new Error('Only pending requests can be cancelled.');
 
-    const result = sqlite
-      .prepare(`
-        UPDATE leave_requests
-        SET status = 'cancelled', updated_at = ?
-        WHERE organization_id = ? AND id = ? AND status = 'pending'
-      `)
-      .run(new Date().toISOString(), user.organizationId, requestId);
+    const result = await tx
+      .update(leaveRequests)
+      .set({ status: 'cancelled', updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(leaveRequests.organizationId, user.organizationId),
+        eq(leaveRequests.id, requestId),
+        eq(leaveRequests.status, 'pending'),
+      ))
+      .returning({ id: leaveRequests.id });
 
-    if (Number(result.changes) !== 1) {
-      throw new Error('Only pending requests can be cancelled.');
-    }
+    if (result.length !== 1) throw new Error('Only pending requests can be cancelled.');
 
-    recordAuditSync({ organizationId: user.organizationId, actorUserId: user.id, action: 'leave_cancelled', entityType: 'leave_request', entityId: requestId });
+    await tx.insert(auditLogs).values({
+      id: nanoid(), organizationId: user.organizationId, actorUserId: user.id,
+      action: 'leave_cancelled', entityType: 'leave_request', entityId: requestId,
+    });
   });
 
   revalidatePath('/leave');
@@ -136,93 +158,84 @@ export async function cancelLeaveAction(requestId: string): Promise<void> {
 export async function approveLeaveAction(requestId: string): Promise<void> {
   const actor = await requireRoleForAction('admin', 'hr');
 
-  withSqliteTransactionSync(() => {
-    const request = sqlite
-      .prepare(`
-        SELECT organization_id, employee_id, leave_type_id, start_date, end_date, days, status
-        FROM leave_requests
-        WHERE organization_id = ? AND id = ?
-        LIMIT 1
-      `)
-      .get(actor.organizationId, requestId) as {
-        organization_id: string;
-        employee_id: string;
-        leave_type_id: string;
-        start_date: string;
-        end_date: string;
-        days: number;
-        status: string;
-      } | undefined;
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, actor.organizationId);
+
+    const requestRows = await tx
+      .select({
+        organizationId: leaveRequests.organizationId,
+        employeeId: leaveRequests.employeeId,
+        leaveTypeId: leaveRequests.leaveTypeId,
+        startDate: leaveRequests.startDate,
+        endDate: leaveRequests.endDate,
+        days: leaveRequests.days,
+        status: leaveRequests.status,
+      })
+      .from(leaveRequests)
+      .where(and(eq(leaveRequests.organizationId, actor.organizationId), eq(leaveRequests.id, requestId)))
+      .limit(1);
+    const request = requestRows[0];
 
     if (!request) throw new Error('Leave request not found.');
-    if (request.organization_id !== actor.organizationId) throw new ForbiddenError();
+    if (request.organizationId !== actor.organizationId) throw new ForbiddenError();
     if (request.status !== 'pending') throw new Error('Only pending requests can be approved.');
 
-    const relationshipValid = sqlite
-      .prepare(`
-        SELECT
-          EXISTS(SELECT 1 FROM leave_types WHERE organization_id = ? AND id = ?) AS leave_type_ok,
-          EXISTS(SELECT 1 FROM employees WHERE organization_id = ? AND id = ?) AS employee_ok
-      `)
-      .get(actor.organizationId, request.leave_type_id, actor.organizationId, request.employee_id) as { leave_type_ok: number; employee_ok: number };
-    if (!relationshipValid.leave_type_ok || !relationshipValid.employee_ok) {
+    const [leaveType, employee] = await Promise.all([
+      tx.select({ id: leaveTypes.id }).from(leaveTypes).where(and(eq(leaveTypes.organizationId, actor.organizationId), eq(leaveTypes.id, request.leaveTypeId))).limit(1),
+      tx.select({ id: employees.id }).from(employees).where(and(eq(employees.organizationId, actor.organizationId), eq(employees.id, request.employeeId))).limit(1),
+    ]);
+    if (!leaveType[0] || !employee[0]) {
       throw new ForbiddenError('Leave record does not belong to this organization.');
     }
 
-    const overlap = sqlite
-      .prepare(`
-        SELECT 1
-        FROM leave_requests
-        WHERE organization_id = ?
-          AND employee_id = ?
-          AND id <> ?
-          AND status IN ('pending', 'approved')
-          AND start_date <= ?
-          AND end_date >= ?
-        LIMIT 1
-      `)
-      .get(actor.organizationId, request.employee_id, requestId, request.end_date, request.start_date);
+    const overlap = await tx
+      .select({ id: leaveRequests.id })
+      .from(leaveRequests)
+      .where(and(
+        eq(leaveRequests.organizationId, actor.organizationId),
+        eq(leaveRequests.employeeId, request.employeeId),
+        ne(leaveRequests.id, requestId),
+        sql`${leaveRequests.status} in ('pending', 'approved')`,
+        sql`${leaveRequests.startDate} <= ${request.endDate}`,
+        sql`${leaveRequests.endDate} >= ${request.startDate}`,
+      ))
+      .limit(1);
+    if (overlap[0]) throw new Error('Cannot approve: the requested dates now overlap another pending or approved leave.');
 
-    if (overlap) throw new Error('Cannot approve: the requested dates now overlap another pending or approved leave.');
+    const year = new Date(`${request.startDate}T00:00:00.000Z`).getUTCFullYear();
+    const now = new Date().toISOString();
+    const balanceUpdate = await tx
+      .update(leaveBalances)
+      .set({ used: sql`${leaveBalances.used} + ${request.days}`, updatedAt: now })
+      .where(and(
+        eq(leaveBalances.organizationId, actor.organizationId),
+        eq(leaveBalances.employeeId, request.employeeId),
+        eq(leaveBalances.leaveTypeId, request.leaveTypeId),
+        eq(leaveBalances.year, year),
+        sql`${leaveBalances.allocated} - ${leaveBalances.used} >= ${request.days}`,
+      ))
+      .returning({ id: leaveBalances.id });
 
-    const balanceUpdate = sqlite
-      .prepare(`
-        UPDATE leave_balances
-        SET used = used + ?, updated_at = ?
-        WHERE organization_id = ?
-          AND employee_id = ?
-          AND leave_type_id = ?
-          AND year = ?
-          AND allocated - used >= ?
-      `)
-      .run(
-        request.days,
-        new Date().toISOString(),
-        actor.organizationId,
-        request.employee_id,
-        request.leave_type_id,
-        new Date(`${request.start_date}T00:00:00.000Z`).getUTCFullYear(),
-        request.days
-      );
-
-    if (Number(balanceUpdate.changes) !== 1) {
+    if (balanceUpdate.length !== 1) {
       throw new Error('Cannot approve: employee no longer has sufficient leave balance.');
     }
 
-    const now = new Date().toISOString();
-    const requestUpdate = sqlite
-      .prepare(`
-        UPDATE leave_requests
-        SET status = 'approved', approver_id = ?, approved_at = ?, updated_at = ?
-        WHERE organization_id = ? AND id = ? AND status = 'pending'
-      `)
-      .run(actor.id, now, now, actor.organizationId, requestId);
+    const requestUpdate = await tx
+      .update(leaveRequests)
+      .set({ status: 'approved', approverId: actor.id, approvedAt: now, updatedAt: now })
+      .where(and(
+        eq(leaveRequests.organizationId, actor.organizationId),
+        eq(leaveRequests.id, requestId),
+        eq(leaveRequests.status, 'pending'),
+      ))
+      .returning({ id: leaveRequests.id });
 
-    if (Number(requestUpdate.changes) !== 1) {
-      throw new Error('Only pending requests can be approved.');
-    }
+    if (requestUpdate.length !== 1) throw new Error('Only pending requests can be approved.');
 
-    recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'leave_approved', entityType: 'leave_request', entityId: requestId });
+    await tx.insert(auditLogs).values({
+      id: nanoid(), organizationId: actor.organizationId, actorUserId: actor.id,
+      action: 'leave_approved', entityType: 'leave_request', entityId: requestId,
+    });
   });
 
   revalidatePath('/leave');
@@ -235,22 +248,33 @@ export async function rejectLeaveAction(requestId: string, formData: FormData): 
   const rejectionReason = String(formData.get('rejectionReason') || '').trim();
   if (!rejectionReason) throw new Error('A rejection reason is required.');
 
-  withSqliteTransactionSync(() => {
-    const result = sqlite
-      .prepare(`
-        UPDATE leave_requests
-        SET status = 'rejected', approver_id = ?, approved_at = ?, rejection_reason = ?, updated_at = ?
-        WHERE organization_id = ? AND id = ? AND status = 'pending'
-      `)
-      .run(actor.id, new Date().toISOString(), rejectionReason, new Date().toISOString(), actor.organizationId, requestId);
+  await db.transaction(async (tx) => {
+    await setTenantContext(tx, actor.organizationId);
+    const now = new Date().toISOString();
+    const result = await tx
+      .update(leaveRequests)
+      .set({ status: 'rejected', approverId: actor.id, approvedAt: now, rejectionReason, updatedAt: now })
+      .where(and(
+        eq(leaveRequests.organizationId, actor.organizationId),
+        eq(leaveRequests.id, requestId),
+        eq(leaveRequests.status, 'pending'),
+      ))
+      .returning({ id: leaveRequests.id });
 
-    if (Number(result.changes) !== 1) {
-      const exists = sqlite.prepare('SELECT 1 FROM leave_requests WHERE organization_id = ? AND id = ? LIMIT 1').get(actor.organizationId, requestId);
-      if (!exists) throw new Error('Leave request not found.');
+    if (result.length !== 1) {
+      const exists = await tx
+        .select({ id: leaveRequests.id })
+        .from(leaveRequests)
+        .where(and(eq(leaveRequests.organizationId, actor.organizationId), eq(leaveRequests.id, requestId)))
+        .limit(1);
+      if (!exists[0]) throw new Error('Leave request not found.');
       throw new Error('Only pending requests can be rejected.');
     }
 
-    recordAuditSync({ organizationId: actor.organizationId, actorUserId: actor.id, action: 'leave_rejected', entityType: 'leave_request', entityId: requestId });
+    await tx.insert(auditLogs).values({
+      id: nanoid(), organizationId: actor.organizationId, actorUserId: actor.id,
+      action: 'leave_rejected', entityType: 'leave_request', entityId: requestId,
+    });
   });
 
   revalidatePath('/leave');
