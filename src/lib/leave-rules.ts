@@ -1,4 +1,4 @@
-import { db } from '@/db/client';
+import { db, setTenantContext } from '@/db/client';
 import { leaveRequests, leaveBalances } from '@/db/schema';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 
@@ -28,6 +28,10 @@ export function validateDateRange(startDate: string, endDate: string): string | 
  * Returns true if the given range overlaps any existing pending or approved
  * leave request for this employee (excluding a specific request id, used
  * when re-checking on approval).
+ *
+ * The organization id is authoritative server-side input. The query still
+ * runs with transaction-local tenant context so PostgreSQL RLS enforces the
+ * same tenant boundary as the application predicate.
  */
 export async function hasOverlappingLeave(
   organizationId: string,
@@ -36,21 +40,24 @@ export async function hasOverlappingLeave(
   endDate: string,
   excludeRequestId?: string
 ): Promise<boolean> {
-  const existing = await db
-    .select({
-      id: leaveRequests.id,
-      startDate: leaveRequests.startDate,
-      endDate: leaveRequests.endDate
-    })
-    .from(leaveRequests)
-    .where(
-      and(
-        eq(leaveRequests.organizationId, organizationId),
-        eq(leaveRequests.employeeId, employeeId),
-        inArray(leaveRequests.status, ['pending', 'approved']),
-        excludeRequestId ? ne(leaveRequests.id, excludeRequestId) : undefined
-      )
-    );
+  const existing = await db.transaction(async (tx) => {
+    await setTenantContext(tx, organizationId);
+    return tx
+      .select({
+        id: leaveRequests.id,
+        startDate: leaveRequests.startDate,
+        endDate: leaveRequests.endDate
+      })
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.organizationId, organizationId),
+          eq(leaveRequests.employeeId, employeeId),
+          inArray(leaveRequests.status, ['pending', 'approved']),
+          excludeRequestId ? ne(leaveRequests.id, excludeRequestId) : undefined
+        )
+      );
+  });
 
   const newStart = parseDateOnly(startDate)!.getTime();
   const newEnd = parseDateOnly(endDate)!.getTime();
@@ -65,6 +72,9 @@ export async function hasOverlappingLeave(
 /**
  * Returns the employee's remaining balance for a leave type in the given year,
  * or null if no balance record exists (treated as zero allowance).
+ *
+ * The lookup is protected by transaction-local tenant context so the runtime
+ * role cannot rely on a client-supplied organization predicate to cross RLS.
  */
 export async function getRemainingBalance(
   organizationId: string,
@@ -72,18 +82,21 @@ export async function getRemainingBalance(
   leaveTypeId: string,
   year: number
 ): Promise<{ allocated: number; used: number; remaining: number } | null> {
-  const rows = await db
-    .select()
-    .from(leaveBalances)
-    .where(
-      and(
-        eq(leaveBalances.organizationId, organizationId),
-        eq(leaveBalances.employeeId, employeeId),
-        eq(leaveBalances.leaveTypeId, leaveTypeId),
-        eq(leaveBalances.year, year)
+  const rows = await db.transaction(async (tx) => {
+    await setTenantContext(tx, organizationId);
+    return tx
+      .select()
+      .from(leaveBalances)
+      .where(
+        and(
+          eq(leaveBalances.organizationId, organizationId),
+          eq(leaveBalances.employeeId, employeeId),
+          eq(leaveBalances.leaveTypeId, leaveTypeId),
+          eq(leaveBalances.year, year)
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
+  });
 
   const row = rows[0];
   if (!row) return null;
