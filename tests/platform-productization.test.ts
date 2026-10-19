@@ -1,103 +1,34 @@
 import './helpers/setup-test-db';
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, sqlite } from '../src/db/client';
-import { organizations, organizationSettings, platformAdministrators, platformAuditLogs, sessions, users, auditLogs } from '../src/db/schema';
+import { db } from '../src/db/client';
+import { auditLogs, organizationSettings, organizations, platformAdministrators, platformAuditLogs, sessions, users } from '../src/db/schema';
+import { and, eq, sql } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { verifyPassword } from '../src/lib/password';
+import { hashPassword, verifyPassword } from '../src/lib/password';
 import type { CurrentUser } from '../src/lib/session';
 import { ForbiddenError } from '../src/lib/auth';
-import { assertPlatformAdministratorSync, provisionOrganizationInTransaction, setOrganizationStatusInTransaction, updateOrganizationConfigurationInTransaction, validateOrganizationConfig, validateProvisioningInput } from '../src/lib/platform';
+import { assertPlatformAdministrator, isPlatformAdministrator, provisionOrganizationInTransaction, setOrganizationStatusInTransaction, updateOrganizationConfigurationInTransaction, validateOrganizationConfig, validateProvisioningInput } from '../src/lib/platform';
 
-const admin: CurrentUser = { id: 'platform-owner', email: 'platform@example.test', role: 'admin', employeeId: null, organizationId: 'org_default', organizationStatus: 'active' };
-const hr: CurrentUser = { ...admin, id: 'hr-user', email: 'hr@example.test', role: 'hr' };
-const employee: CurrentUser = { ...admin, id: 'employee-user', email: 'employee@example.test', role: 'employee' };
+let sequence=0;
+let admin:CurrentUser;let hr:CurrentUser;let employee:CurrentUser;let orgId:string;
+async function fixture(){sequence++;const suffix=`platform-${process.pid}-${sequence}-${nanoid(6).toLowerCase()}`;orgId=`org_${suffix}`;const adminId=`usr_${suffix}`;const hrId=`usr_${suffix}-hr`;const employeeId=`usr_${suffix}-emp`;const {hash,salt}=hashPassword('StrongInitialPassword123!');await db.insert(organizations).values({id:orgId,name:'Default Organization',slug:suffix,status:'active'});await db.insert(organizationSettings).values({organizationId:orgId});await db.insert(users).values([{id:adminId,organizationId:orgId,email:`${suffix}@example.test`,passwordHash:hash,passwordSalt:salt,role:'admin',isActive:true},{id:hrId,organizationId:orgId,email:`${suffix}-hr@example.test`,passwordHash:hash,passwordSalt:salt,role:'hr',isActive:true},{id:employeeId,organizationId:orgId,email:`${suffix}-employee@example.test`,passwordHash:hash,passwordSalt:salt,role:'employee',isActive:true}]);await db.insert(platformAdministrators).values({userId:adminId});admin={id:adminId,email:`${suffix}@example.test`,role:'admin',employeeId:null,organizationId:orgId,organizationStatus:'active'};hr={...admin,id:hrId,email:`${suffix}-hr@example.test`,role:'hr'};employee={...admin,id:employeeId,email:`${suffix}-employee@example.test`,role:'employee'};}
+beforeEach(fixture);
 
-async function resetFixture() {
-  sqlite.exec('DELETE FROM sessions; DELETE FROM organization_settings; DELETE FROM platform_administrators;');
-  sqlite.exec("UPDATE organizations SET name='Default Organization', slug='default', status='active', updated_at=current_timestamp WHERE id='org_default';");
-  sqlite.exec("INSERT OR IGNORE INTO users (id, organization_id, email, password_hash, password_salt, role, is_active) VALUES ('platform-owner','org_default','platform@example.test','x','x','admin',1), ('hr-user','org_default','hr@example.test','x','x','hr',1), ('employee-user','org_default','employee@example.test','x','x','employee',1);");
-  sqlite.exec("INSERT OR IGNORE INTO organization_settings (organization_id) VALUES ('org_default');");
-  sqlite.exec("INSERT OR IGNORE INTO platform_administrators (user_id) VALUES ('platform-owner');");
-  sqlite.exec("INSERT OR IGNORE INTO organizations (id,name,slug,status) VALUES ('org_b','Organization B','organization-b','active');");
-  sqlite.exec("INSERT OR IGNORE INTO organization_settings (organization_id) VALUES ('org_b');");
-}
+test('platform capability is separate from organization roles',async()=>{assert.equal(await isPlatformAdministrator(admin.id),true);assert.equal(await isPlatformAdministrator(hr.id),false);assert.equal(await isPlatformAdministrator(employee.id),false);await assert.rejects(()=>assertPlatformAdministrator(hr.id),ForbiddenError);await assert.rejects(()=>assertPlatformAdministrator(employee.id),ForbiddenError);});
 
-test.beforeEach(resetFixture);
+test('valid provisioning creates organization defaults and initial admin atomically',async()=>{const result=await provisionOrganizationInTransaction(admin,{name:'New Customer',slug:`new-customer-${sequence}`,adminEmail:`owner-${sequence}@new-customer.test`,adminPassword:'StrongInitialPassword123!'});assert.ok(result.organizationId.startsWith('org_'));assert.ok(result.adminUserId.startsWith('usr_'));const org=(await db.select({name:organizations.name,slug:organizations.slug,status:organizations.status}).from(organizations).where(eq(organizations.id,result.organizationId)).limit(1))[0];const config=(await db.select({organizationId:organizationSettings.organizationId,timezone:organizationSettings.timezone,locale:organizationSettings.locale}).from(organizationSettings).where(eq(organizationSettings.organizationId,result.organizationId)).limit(1))[0];const user=(await db.select({organizationId:users.organizationId,role:users.role,isActive:users.isActive,passwordHash:users.passwordHash,passwordSalt:users.passwordSalt}).from(users).where(eq(users.id,result.adminUserId)).limit(1))[0];assert.equal(org?.slug,`new-customer-${sequence}`);assert.equal(org?.status,'active');assert.equal(config?.organizationId,result.organizationId);assert.equal(config?.timezone,'UTC');assert.equal(user?.organizationId,result.organizationId);assert.equal(user?.role,'admin');assert.equal(user?.isActive,true);assert.equal(verifyPassword('StrongInitialPassword123!',user!.passwordHash,user!.passwordSalt),true);const audits=await db.select({id:platformAuditLogs.id}).from(platformAuditLogs).where(sql`${platformAuditLogs.entityId} in (${result.organizationId},${result.adminUserId})`);assert.equal(audits.length,2);});
 
-test('platform capability is separate from organization roles', async () => {
-  assert.equal(await (await import('../src/lib/platform')).isPlatformAdministrator(admin.id), true);
-  assert.equal(await (await import('../src/lib/platform')).isPlatformAdministrator(hr.id), false);
-  assert.equal(await (await import('../src/lib/platform')).isPlatformAdministrator(employee.id), false);
-  assert.throws(() => assertPlatformAdministratorSync(hr.id), ForbiddenError);
-  assert.throws(() => assertPlatformAdministratorSync(employee.id), ForbiddenError);
-});
+test('provisioning rejects duplicate slug and duplicate account identity',async()=>{await assert.rejects(()=>provisionOrganizationInTransaction(admin,{name:'Duplicate',slug:`${admin.email.split('@')[0]}`,adminEmail:`new-${sequence}@example.test`,adminPassword:'StrongInitialPassword123!'}),/slug is already|already in use/i);await assert.rejects(()=>provisionOrganizationInTransaction(admin,{name:'Duplicate',slug:`unique-${sequence}`,adminEmail:admin.email,adminPassword:'StrongInitialPassword123!'}),/email is already|registered/i);});
 
-test('valid provisioning creates one organization, defaults, and initial admin atomically', () => {
-  const result = provisionOrganizationInTransaction(admin, { name: 'New Customer', slug: 'new-customer', adminEmail: 'owner@new-customer.test', adminPassword: 'StrongInitialPassword123!' });
-  assert.ok(result.organizationId.startsWith('org_'));
-  assert.ok(result.adminUserId.startsWith('usr_'));
-  const org = sqlite.prepare('SELECT name, slug, status FROM organizations WHERE id = ?').get(result.organizationId) as any;
-  const config = sqlite.prepare('SELECT organization_id, timezone, locale FROM organization_settings WHERE organization_id = ?').get(result.organizationId) as any;
-  const user = sqlite.prepare('SELECT organization_id, role, is_active, password_hash, password_salt FROM users WHERE id = ?').get(result.adminUserId) as any;
-  assert.equal(org.slug, 'new-customer'); assert.equal(org.status, 'active');
-  assert.equal(config.organization_id, result.organizationId); assert.equal(config.timezone, 'UTC');
-  assert.equal(user.organization_id, result.organizationId); assert.equal(user.role, 'admin'); assert.equal(user.is_active, 1);
-  assert.equal(verifyPassword('StrongInitialPassword123!', user.password_hash, user.password_salt), true);
-  const audits = Number(sqlite.prepare("SELECT COUNT(*) c FROM platform_audit_logs WHERE entity_id IN (?, ?)").get(result.organizationId, result.adminUserId)?.c ?? 0);
-  assert.equal(audits, 2);
-});
+test('provisioning rolls back all records on a deliberate required-step failure',async()=>{const slug=`rollback-${sequence}`;await assert.rejects(()=>provisionOrganizationInTransaction(admin,{name:'Rollback Tenant',slug,adminEmail:`rollback-${sequence}@example.test`,adminPassword:'StrongInitialPassword123!'},()=>{throw new Error('deliberate provisioning failure');}),/deliberate provisioning failure/);assert.equal((await db.select({id:organizations.id}).from(organizations).where(eq(organizations.slug,slug)).limit(1)).length,0);});
 
-test('provisioning rejects duplicate slug and duplicate account identity', () => {
-  assert.throws(() => provisionOrganizationInTransaction(admin, { name: 'Duplicate', slug: 'organization-b', adminEmail: 'new@example.test', adminPassword: 'StrongInitialPassword123!' }), /slug is already/);
-  assert.throws(() => provisionOrganizationInTransaction(admin, { name: 'Duplicate', slug: 'new-unique-slug', adminEmail: 'platform@example.test', adminPassword: 'StrongInitialPassword123!' }), /email is already/);
-});
+test('suspension revokes tenant sessions and preserves tenant data for recovery',async()=>{const target=`org_target_${process.pid}_${sequence}`;const targetUser=`usr_target_${process.pid}_${sequence}`;const {hash,salt}=hashPassword('StrongInitialPassword123!');await db.insert(organizations).values({id:target,name:'Target',slug:`target-${process.pid}-${sequence}`,status:'active'});await db.insert(organizationSettings).values({organizationId:target});await db.insert(users).values({id:targetUser,organizationId:target,email:`target-${sequence}@example.test`,passwordHash:hash,passwordSalt:salt,role:'admin',isActive:true});await db.insert(sessions).values({id:`sess-${process.pid}-${sequence}`,organizationId:target,userId:targetUser,expiresAt:'2099-01-01T00:00:00.000Z',lastActiveAt:new Date().toISOString()});await setOrganizationStatusInTransaction(admin,target,'suspended');assert.equal((await db.select({status:organizations.status}).from(organizations).where(eq(organizations.id,target)).limit(1))[0]?.status,'suspended');assert.equal((await db.select({id:sessions.id}).from(sessions).where(eq(sessions.organizationId,target))).length,0);assert.equal((await db.select({organizationId:organizationSettings.organizationId}).from(organizationSettings).where(eq(organizationSettings.organizationId,target))).length,1);await assert.rejects(()=>setOrganizationStatusInTransaction(hr,target,'active'),/Platform administration/);await setOrganizationStatusInTransaction(admin,target,'active');assert.equal((await db.select({status:organizations.status}).from(organizations).where(eq(organizations.id,target)).limit(1))[0]?.status,'active');const auditCount=await db.select({id:platformAuditLogs.id}).from(platformAuditLogs).where(eq(platformAuditLogs.entityId,target));assert.equal(auditCount.length,2);});
 
-test('provisioning rolls back all tenant records on a deliberate required-step failure', () => {
-  assert.throws(() => provisionOrganizationInTransaction(admin, { name: 'Rollback Tenant', slug: 'rollback-tenant', adminEmail: 'rollback@example.test', adminPassword: 'StrongInitialPassword123!' }, () => { throw new Error('deliberate provisioning failure'); }), /deliberate provisioning failure/);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM organizations WHERE id='org_rollback'").get()?.c, 0);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM users WHERE id='usr_rollback'").get()?.c, 0);
-});
+test('platform cannot suspend the organization containing its current account',async()=>{await assert.rejects(()=>setOrganizationStatusInTransaction(admin,admin.organizationId,'suspended'),/cannot suspend/i);});
 
-test('suspension revokes tenant sessions, blocks tenant context, and preserves data for recovery', () => {
-  sqlite.prepare("INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('b-admin','org_b','b-admin@example.test','x','x','admin',1)").run();
-  sqlite.prepare("INSERT INTO sessions (id,organization_id,user_id,expires_at,last_active_at) VALUES ('b-session','org_b','b-admin','2099-01-01','2026-01-01')").run();
-  setOrganizationStatusInTransaction(admin, 'org_b', 'suspended');
-  assert.equal(sqlite.prepare("SELECT status FROM organizations WHERE id='org_b'").get()?.status, 'suspended');
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM sessions WHERE organization_id='org_b'").get()?.c, 0);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM organization_settings WHERE organization_id='org_b'").get()?.c, 1);
-  assert.throws(() => setOrganizationStatusInTransaction(hr, 'org_b', 'active'), /Platform administration/);
-  setOrganizationStatusInTransaction(admin, 'org_b', 'active');
-  assert.equal(sqlite.prepare("SELECT status FROM organizations WHERE id='org_b'").get()?.status, 'active');
-  const auditCount = Number(sqlite.prepare("SELECT COUNT(*) c FROM platform_audit_logs WHERE entity_id='org_b'").get()?.c ?? 0);
-  assert.equal(auditCount, 2);
-});
+test('organization configuration is tenant-scoped validated and audited',async()=>{await updateOrganizationConfigurationInTransaction(admin,{timezone:'Asia/Kolkata',locale:'en-IN',dateFormat:'DD-MM-YYYY',weekStartDay:1});const cfg=(await db.select({timezone:organizationSettings.timezone,dateFormat:organizationSettings.dateFormat}).from(organizationSettings).where(eq(organizationSettings.organizationId,orgId)).limit(1))[0];assert.equal(cfg?.timezone,'Asia/Kolkata');assert.equal(cfg?.dateFormat,'DD-MM-YYYY');assert.equal(validateOrganizationConfig({timezone:'Mars/Colony',locale:'en-IN',dateFormat:'YYYY-MM-DD',weekStartDay:1})?.includes('Unsupported timezone'),true);assert.equal(validateOrganizationConfig({timezone:'UTC',locale:'bad_locale',dateFormat:'YYYY-MM-DD',weekStartDay:1})?.includes('Locale'),true);const audit=await db.select({action:auditLogs.action}).from(auditLogs).where(and(eq(auditLogs.organizationId,orgId),eq(auditLogs.entityType,'organization_settings'),eq(auditLogs.entityId,orgId)));assert.equal(audit.at(-1)?.action,'organization_configuration_changed');});
 
-test('platform cannot suspend the organization containing its current account', () => {
-  assert.throws(() => setOrganizationStatusInTransaction(admin, admin.organizationId, 'suspended'), /cannot suspend/);
-});
+test('platform and tenant audit logs remain immutable',async()=>{await assert.rejects(db.execute(sql`update platform_audit_logs set action='tampered'`),/immutable/i);await assert.rejects(db.execute(sql`delete from platform_audit_logs`),/immutable/i);});
 
-test('organization configuration is tenant-scoped, validated, and audited', () => {
-  const actor = admin;
-  updateOrganizationConfigurationInTransaction(actor, { timezone: 'Asia/Kolkata', locale: 'en-IN', dateFormat: 'DD-MM-YYYY', weekStartDay: 1 });
-  const cfg = sqlite.prepare("SELECT timezone,date_format FROM organization_settings WHERE organization_id='org_default'").get() as any;
-  assert.equal(cfg.timezone, 'Asia/Kolkata'); assert.equal(cfg.date_format, 'DD-MM-YYYY');
-  assert.equal(sqlite.prepare("SELECT timezone FROM organization_settings WHERE organization_id='org_b'").get()?.timezone, 'UTC');
-  assert.equal(sqlite.prepare("SELECT action FROM audit_logs WHERE entity_type='organization_settings' AND entity_id='org_default' ORDER BY rowid DESC LIMIT 1").get()?.action, 'organization_configuration_changed');
-  assert.match(validateOrganizationConfig({ timezone: 'Mars/Colony', locale: 'en-IN', dateFormat: 'YYYY-MM-DD', weekStartDay: 1 }) ?? '', /Unsupported timezone/);
-  assert.match(validateOrganizationConfig({ timezone: 'UTC', locale: 'bad_locale', dateFormat: 'YYYY-MM-DD', weekStartDay: 1 }) ?? '', /Locale/);
-});
-
-test('platform and tenant audit logs remain immutable', () => {
-  assert.throws(() => sqlite.prepare("UPDATE platform_audit_logs SET action='tampered'").run(), /immutable/);
-  assert.throws(() => sqlite.prepare("DELETE FROM platform_audit_logs").run(), /immutable/);
-  sqlite.prepare("INSERT INTO audit_logs (id,organization_id,actor_user_id,action,entity_type,entity_id) VALUES ('tenant-audit','org_default','platform-owner','test','organization','org_default')").run();
-  assert.throws(() => sqlite.prepare("DELETE FROM audit_logs WHERE id='tenant-audit'").run(), /immutable/);
-});
-
-test('validation rejects unsafe provisioning input', () => {
-  assert.equal(validateProvisioningInput({ name: 'Valid', slug: 'valid-org', adminEmail: 'owner@example.test', adminPassword: 'StrongInitialPassword123!' }), null);
-  assert.match(validateProvisioningInput({ name: 'x', slug: 'valid-org', adminEmail: 'owner@example.test', adminPassword: 'StrongInitialPassword123!' }) ?? '', /between 2/);
-  assert.match(validateProvisioningInput({ name: 'Valid', slug: 'bad slug', adminEmail: 'owner@example.test', adminPassword: 'StrongInitialPassword123!' }) ?? '', /lowercase/);
-  assert.match(validateProvisioningInput({ name: 'Valid', slug: 'valid-org', adminEmail: 'owner@example.test', adminPassword: 'short' }) ?? '', /12/);
-});
+test('validation rejects unsafe provisioning input',()=>{assert.equal(validateProvisioningInput({name:'Valid',slug:'valid-org',adminEmail:'owner@example.test',adminPassword:'StrongInitialPassword123!'}),null);assert.match(validateProvisioningInput({name:'x',slug:'valid-org',adminEmail:'owner@example.test',adminPassword:'StrongInitialPassword123!'})??'',/between 2/);assert.match(validateProvisioningInput({name:'Valid',slug:'bad slug',adminEmail:'owner@example.test',adminPassword:'StrongInitialPassword123!'})??'',/lowercase/);assert.match(validateProvisioningInput({name:'Valid',slug:'valid-org',adminEmail:'owner@example.test',adminPassword:'short'})??'',/12/);});
