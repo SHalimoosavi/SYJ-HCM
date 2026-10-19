@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import postgres from 'postgres';
 import { db, setTenantContext } from '../src/db/client';
+import { jobRequisitions } from '../src/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { canTransitionApplicationStatus, canTransitionJobStatus } from '../src/lib/recruitment';
 
 const migrationUrl = process.env.DATABASE_MIGRATION_URL;
@@ -69,7 +71,7 @@ test('application history is tenant-bound to its application and actor', async (
 
 test('cross-tenant recruitment reads are blocked by RLS', async () => {
   await setupDb`INSERT INTO job_requisitions (id,organization_id,requisition_code,title,employment_type,description,requirements,openings,status,created_by) VALUES ('jb','org_b','REQ-B','B Job','full_time','d','r',1,'open','admin-b')`;
-  const rows=await db.transaction(async(tx)=>{await setTenantContext(tx,'org_default');return tx.execute<{id:string}>(sql`SELECT id FROM job_requisitions WHERE organization_id='org_b' AND id='jb'`);});
+  const rows=await db.transaction(async(tx)=>{await setTenantContext(tx,'org_default');return tx.select({id:jobRequisitions.id}).from(jobRequisitions).where(and(eq(jobRequisitions.organizationId,'org_b'),eq(jobRequisitions.id,'jb')));});
   assert.equal(rows.length,0);
 });
 
