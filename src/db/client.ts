@@ -29,23 +29,6 @@ export async function setTenantContext(tx: { execute: (query: SQL) => Promise<un
   await tx.execute(drizzleSql`select set_config('app.current_org_id', ${organizationId}, true)`);
 }
 
-
-/**
- * Temporary compile-time compatibility surface for Prompt B. It contains no
- * SQLite implementation and deliberately fails if an unmigrated legacy path
- * attempts to execute. Remove these exports once the remaining application
- * raw SQL call sites are migrated to PostgreSQL.
- */
-type LegacyStatement = { run: (...args: unknown[]) => { changes: number }; get: (...args: unknown[]) => any; all: (...args: unknown[]) => any[] };
-export const sqlite = {
-  prepare(_query: string): LegacyStatement { throw new Error('SQLite runtime access has been removed; migrate this call site to PostgreSQL.'); },
-  exec(_query: string): void { throw new Error('SQLite runtime access has been removed; migrate this call site to PostgreSQL.'); }
-};
-
-export function withSqliteTransactionSync<T>(_callback: () => T): T {
-  throw new Error('SQLite synchronous transactions have been removed; migrate this call site to db.transaction(async ...).');
-}
-
 export async function closeDatabase(): Promise<void> {
   await sql.end({ timeout: 5 });
 }
