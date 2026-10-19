@@ -12,6 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:import-sqlite": "tsx scripts/migrate-sqlite-to-postgres.ts",
     "test": "node --import tsx --test --test-reporter=spec tests/*.test.ts",
     "platform:grant-admin": "tsx scripts/grant-platform-admin.ts",
     "test:foundation": "node --import tsx --test --test-reporter=spec tests/postgres-foundation.test.ts"
