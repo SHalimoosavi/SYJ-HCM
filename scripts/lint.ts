@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const roots=['src','scripts','tests'];
 const extensions=new Set(['.ts','.tsx','.js','.mjs','.cjs']);
+const lintFile=path.resolve('scripts/lint.ts');
 const forbidden=[
   {pattern:/@ts-ignore\b/,message:'@ts-ignore is forbidden'},
   {pattern:/@ts-expect-error\b/,message:'@ts-expect-error is forbidden'},
@@ -21,7 +22,8 @@ function walk(dir:string){
 for(const root of roots)walk(root);
 const errors:string[]=[];
 for(const file of files){
+  if(path.resolve(file)===lintFile)continue;
   const text=fs.readFileSync(file,'utf8');
   for(const rule of forbidden)if(rule.pattern.test(text))errors.push(`${file}: ${rule.message}`);
 }
-if(errors.length){for(const error of errors)console.error(error);process.exitCode=1;}else{console.log(`Lint passed: ${files.length} source/test/script files checked.`);}
+if(errors.length){for(const error of errors)console.error(error);process.exitCode=1;}else{console.log(`Lint passed: ${files.length-1} source/test/script files checked.`);}
