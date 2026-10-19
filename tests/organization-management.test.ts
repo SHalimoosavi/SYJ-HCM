@@ -27,7 +27,11 @@ beforeEach(async () => {
     await tx.unsafe('DELETE FROM sessions');
     await tx.unsafe('DELETE FROM employees');
     await tx.unsafe('DELETE FROM departments');
-    await tx.unsafe("DELETE FROM users WHERE id = 'admin-a2'");
+    // Users are retained because audit_logs.actor_user_id is intentionally
+    // immutable. Hard-deleting a referenced actor would invoke ON DELETE SET
+    // NULL and violate the audit immutability trigger. Reset the fixture user
+    // in-place instead.
+    await tx.unsafe("UPDATE users SET organization_id = 'org_default', email = 'admin-a2@example.test', password_hash = 'x', password_salt = 'x', role = 'admin', is_active = true, employee_id = NULL WHERE id = 'admin-a2'");
     await tx.unsafe("UPDATE organizations SET name = 'Default Organization', slug = 'default', status = 'active', updated_at = now() WHERE id = 'org_default'");
     await tx.unsafe("INSERT INTO organizations (id, name, slug, status) VALUES ('org_b', 'Organization B', 'organization-b', 'active') ON CONFLICT (id) DO UPDATE SET name=excluded.name, slug=excluded.slug, status=excluded.status");
     await tx.unsafe("UPDATE users SET organization_id = CASE id WHEN 'admin-b' THEN 'org_b' ELSE 'org_default' END, email = CASE id WHEN 'admin-a' THEN 'admin-a@example.test' WHEN 'hr-a' THEN 'hr-a@example.test' WHEN 'employee-a' THEN 'employee-a@example.test' WHEN 'admin-b' THEN 'admin-b@example.test' END, password_hash = 'x', password_salt = 'x', role = CASE id WHEN 'admin-a' THEN 'admin' WHEN 'hr-a' THEN 'hr' WHEN 'employee-a' THEN 'employee' WHEN 'admin-b' THEN 'admin' END, is_active = true, employee_id = NULL WHERE id IN ('admin-a','hr-a','employee-a','admin-b')");
@@ -81,7 +85,7 @@ test('member status changes cannot cross tenant boundary and revoke sessions', a
 test('administrator lockout protections preserve an active admin', async () => {
   await assert.rejects(() => setMemberStatusInTransaction(admin, 'admin-a', false), /cannot deactivate/);
   await assert.rejects(() => setMemberRoleInTransaction(admin, 'admin-a', 'hr'), /cannot change your own role/);
-  await setupDb`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('admin-a2','org_default','admin-a2@example.test','x','x','admin',true)`;
+  await setupDb`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('admin-a2','org_default','admin-a2@example.test','x','x','admin',true) ON CONFLICT (id) DO UPDATE SET organization_id=excluded.organization_id,email=excluded.email,password_hash='x',password_salt='x',role='admin',is_active=true,employee_id=NULL`;
   await setMemberRoleInTransaction(admin, 'admin-a2', 'hr');
   const rows = await setupDb`SELECT role FROM users WHERE id='admin-a2'`;
   assert.equal(rows[0]?.role, 'hr');
