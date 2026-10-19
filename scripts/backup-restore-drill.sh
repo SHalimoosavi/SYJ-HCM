@@ -2,15 +2,16 @@
 set -euo pipefail
 
 SOURCE_URL="${DATABASE_MIGRATION_URL:-${DATABASE_URL:-}}"
-if [[ -z "$SOURCE_URL" ]]; then
-  echo "DATABASE_MIGRATION_URL or DATABASE_URL is required" >&2
-  exit 1
-fi
+RUNTIME_URL="${DATABASE_RUNTIME_URL:-${DATABASE_URL:-}}"
+if [[ -z "$SOURCE_URL" ]]; then echo "DATABASE_MIGRATION_URL or DATABASE_URL is required" >&2; exit 1; fi
+if [[ -z "$RUNTIME_URL" ]]; then echo "DATABASE_RUNTIME_URL or DATABASE_URL is required" >&2; exit 1; fi
 
 RESTORE_DB="syj_hcm_restore_${RANDOM}_$(date +%s)"
 DUMP_FILE="${TMPDIR:-/tmp}/syj-hcm-${RESTORE_DB}.dump"
 BASE_URL="${SOURCE_URL%/*}"
 RESTORE_URL="${BASE_URL}/${RESTORE_DB}"
+RUNTIME_BASE_URL="${RUNTIME_URL%/*}"
+RESTORE_RUNTIME_URL="${RUNTIME_BASE_URL}/${RESTORE_DB}"
 
 cleanup() {
   rm -f "$DUMP_FILE"
@@ -26,7 +27,8 @@ psql "$RESTORE_URL" -v ON_ERROR_STOP=1 -c "SELECT count(*) > 0 AS migrations_res
 psql "$RESTORE_URL" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS organization_count FROM public.organizations"
 psql "$RESTORE_URL" -v ON_ERROR_STOP=1 -c "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('employees','candidates','applications','offers','candidate_documents') ORDER BY relname"
 
-# The application runtime must still use the non-BYPASSRLS role after restore.
-psql "$RESTORE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = current_user"
+psql "$RESTORE_URL" -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE \"${RESTORE_DB}\" TO app_runtime; GRANT USAGE ON SCHEMA public TO app_runtime; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO app_runtime; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO app_runtime"
+psql "$RESTORE_RUNTIME_URL" -v ON_ERROR_STOP=1 -c "SELECT current_user, current_database(), (SELECT rolbypassrls FROM pg_roles WHERE rolname=current_user) AS rolbypassrls"
+psql "$RESTORE_RUNTIME_URL" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS rows_without_tenant_context FROM public.employees"
 
 echo "PostgreSQL backup/restore drill completed: $RESTORE_DB"
