@@ -16,13 +16,13 @@ async function reset() {
     // Delete children before parents. users.employee_id references employees,
     // so users must be removed before employees during fixture reset.
     for (const table of ['interview_feedback_corrections','interview_decisions','interview_feedback','interview_participants','candidate_activities','candidate_notes','interviews','interview_rounds','recruitment_stages','application_history','applications','candidates','job_requisitions','sessions','departments','organization_settings','users','employees']) {
-      await tx.unsafe(`DELETE FROM \"${table}\"`);
+      await tx.unsafe(`DELETE FROM "${table}"`);
     }
-    await tx.unsafe(\"INSERT INTO organizations (id,name,slug,status) VALUES ('org_default','Default Organization','default','active'),('org_b','Organization B','organization-b','active') ON CONFLICT(id) DO UPDATE SET name=excluded.name,slug=excluded.slug,status=excluded.status\");
-    await tx.unsafe(\"INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('admin-a','org_default','admin-a@example.test','x','x','admin',true),('hr-a','org_default','hr-a@example.test','x','x','hr',true),('admin-b','org_b','admin-b@example.test','x','x','admin',true) ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,email=excluded.email,role=excluded.role,is_active=true\");
-    await tx.unsafe(\"INSERT INTO departments (id,organization_id,name) VALUES ('dept-a','org_default','Engineering'),('dept-b','org_b','Engineering') ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,name=excluded.name\");
-    await tx.unsafe(\"INSERT INTO employees (id,organization_id,employee_code,first_name,last_name,work_email,date_of_joining,designation,employment_status,employment_type) VALUES ('emp-a','org_default','E1','A','Employee','emp-a@example.test','2026-01-01','Manager','active','full_time'),('emp-b','org_b','E1','B','Employee','emp-b@example.test','2026-01-01','Manager','active','full_time') ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,employee_code=excluded.employee_code\");
-    await tx.unsafe(\"INSERT INTO organization_settings (organization_id) VALUES ('org_default'),('org_b') ON CONFLICT(organization_id) DO NOTHING\");
+    await tx.unsafe("INSERT INTO organizations (id,name,slug,status) VALUES ('org_default','Default Organization','default','active'),('org_b','Organization B','organization-b','active') ON CONFLICT(id) DO UPDATE SET name=excluded.name,slug=excluded.slug,status=excluded.status");
+    await tx.unsafe("INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,is_active) VALUES ('admin-a','org_default','admin-a@example.test','x','x','admin',true),('hr-a','org_default','hr-a@example.test','x','x','hr',true),('admin-b','org_b','admin-b@example.test','x','x','admin',true) ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,email=excluded.email,role=excluded.role,is_active=true");
+    await tx.unsafe("INSERT INTO departments (id,organization_id,name) VALUES ('dept-a','org_default','Engineering'),('dept-b','org_b','Engineering') ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,name=excluded.name");
+    await tx.unsafe("INSERT INTO employees (id,organization_id,employee_code,first_name,last_name,work_email,date_of_joining,designation,employment_status,employment_type) VALUES ('emp-a','org_default','E1','A','Employee','emp-a@example.test','2026-01-01','Manager','active','full_time'),('emp-b','org_b','E1','B','Employee','emp-b@example.test','2026-01-01','Manager','active','full_time') ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id,employee_code=excluded.employee_code");
+    await tx.unsafe("INSERT INTO organization_settings (organization_id) VALUES ('org_default'),('org_b') ON CONFLICT(organization_id) DO NOTHING");
   });
 }
 
