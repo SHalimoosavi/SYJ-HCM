@@ -27,7 +27,6 @@ if(invalidTables.length)throw new Error(`Unsupported import table(s): ${invalidT
 
 type SourceRow = Record<string, unknown>;
 type TargetColumn = { column_name:string; data_type:string; udt_name:string; is_nullable:string };
-
 type MigrationValue = string | number | boolean | null;
 
 function quoteIdentifier(value:string){return `"${value.replaceAll('"','""')}"`;}
@@ -107,7 +106,7 @@ async function main(){
           try{
             const values=usable.map((column)=>convertValue(row[column.column_name],column));
             const result=await tx`
-              INSERT INTO ${tx.unsafe(quoteIdentifier(table))} (${tx.unsafe(names)})
+              INSERT INTO ${client(table)} (${client.unsafe(names)})
               VALUES ${tx(values)}
               ON CONFLICT DO NOTHING
               RETURNING 1
