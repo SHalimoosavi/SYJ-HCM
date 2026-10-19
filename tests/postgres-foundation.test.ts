@@ -1,11 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
-
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("DATABASE_URL is required for PostgreSQL foundation tests.");
-const sql = postgres(databaseUrl, { max: 1, connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT || 10) });
-const EXPECTED_MIGRATIONS=["0000_init.sql","0001_phase1_1_security.sql","0002_attendance_clock_order_insert_guard.sql","0003_multi_tenant_foundation.sql","0004_phase1_2c_productization.sql","0005_phase2_1_recruitment_foundation.sql","0006_phase2_2_recruitment_workflow_interviews.sql","0007_phase2_3_candidate_documents.sql","0008_phase2_4_job_publishing.sql","0009_phase2_5_offer_management.sql","0010_postgres_foundation.sql","0011_public_recruitment_bootstrap.sql","0012_postgres_default_restoration.sql","0013_row_level_integrity_triggers.sql"];
+const databaseUrl=process.env.DATABASE_URL;if(!databaseUrl)throw new Error("DATABASE_URL is required for PostgreSQL foundation tests.");const sql=postgres(databaseUrl,{max:1,connect_timeout:Number(process.env.DATABASE_CONNECT_TIMEOUT||10)});
+const EXPECTED_MIGRATIONS=["0000_init.sql","0001_phase1_1_security.sql","0002_attendance_clock_order_insert_guard.sql","0003_multi_tenant_foundation.sql","0004_phase1_2c_productization.sql","0005_phase2_1_recruitment_foundation.sql","0006_phase2_2_recruitment_workflow_interviews.sql","0007_phase2_3_candidate_documents.sql","0008_phase2_4_job_publishing.sql","0009_phase2_5_offer_management.sql","0010_postgres_foundation.sql","0011_public_recruitment_bootstrap.sql","0012_postgres_default_restoration.sql","0013_row_level_integrity_triggers.sql","0014_offer_reference_tenant_scope.sql"];
 const PRIVATE_RLS_TABLES=["organization_settings","departments","users","employees","job_requisitions","candidates","applications","application_history","recruitment_stages","interview_rounds","interviews","interview_participants","interview_feedback","interview_feedback_corrections","interview_decisions","candidate_notes","candidate_activities","leave_types","leave_balances","leave_requests","attendance_records","audit_logs","offers","offer_history","offer_response_rate_limits","candidate_documents"];
 const BOOLEANS=[["users","is_active"],["organization_settings","public_careers_enabled"],["leave_types","is_paid"],["recruitment_stages","is_active"],["job_publications","application_enabled"],["candidate_documents","legal_hold"]];
 test.after(async()=>{await sql.end({timeout:5});});
