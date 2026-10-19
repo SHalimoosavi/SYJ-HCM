@@ -26,6 +26,7 @@ const EXPECTED_MIGRATIONS = [
   "0009_phase2_5_offer_management.sql",
   "0010_postgres_foundation.sql",
   "0011_public_recruitment_bootstrap.sql",
+  "0012_postgres_default_restoration.sql",
 ];
 
 const PRIVATE_RLS_TABLES = [
