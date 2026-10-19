@@ -25,6 +25,7 @@ const EXPECTED_MIGRATIONS = [
   "0008_phase2_4_job_publishing.sql",
   "0009_phase2_5_offer_management.sql",
   "0010_postgres_foundation.sql",
+  "0011_public_recruitment_bootstrap.sql",
 ];
 
 const PRIVATE_RLS_TABLES = [
@@ -86,10 +87,7 @@ test("all PostgreSQL migrations are recorded", async () => {
     ORDER BY name
   `;
 
-  assert.deepEqual(
-    rows.map((row) => row.name),
-    EXPECTED_MIGRATIONS,
-  );
+  assert.deepEqual(rows.map((row) => row.name), EXPECTED_MIGRATIONS);
 });
 
 test("required foundation tables exist", async () => {
@@ -115,10 +113,7 @@ test("required foundation tables exist", async () => {
       AND table_name = ANY(${sql.array(required)})
   `;
 
-  assert.deepEqual(
-    rows.map((row) => row.table_name).sort(),
-    [...required].sort(),
-  );
+  assert.deepEqual(rows.map((row) => row.table_name).sort(), [...required].sort());
 });
 
 test("private tenant tables have RLS enabled", async () => {
@@ -131,14 +126,7 @@ test("private tenant tables have RLS enabled", async () => {
   `;
 
   assert.equal(rows.length, PRIVATE_RLS_TABLES.length);
-
-  for (const row of rows) {
-    assert.equal(
-      row.relrowsecurity,
-      true,
-      `RLS is not enabled on ${row.relname}`,
-    );
-  }
+  for (const row of rows) assert.equal(row.relrowsecurity, true, `RLS is not enabled on ${row.relname}`);
 });
 
 test("intentionally exempt runtime tables do not require RLS", async () => {
@@ -147,22 +135,11 @@ test("intentionally exempt runtime tables do not require RLS", async () => {
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'
-      AND c.relname = ANY(${sql.array([
-        "sessions",
-        "login_rate_limits",
-        "public_application_rate_limits",
-      ])})
+      AND c.relname = ANY(${sql.array(["sessions","login_rate_limits","public_application_rate_limits"])} )
   `;
 
   assert.equal(rows.length, 3);
-
-  for (const row of rows) {
-    assert.equal(
-      row.relrowsecurity,
-      false,
-      `Unexpected RLS on exempt table ${row.relname}`,
-    );
-  }
+  for (const row of rows) assert.equal(row.relrowsecurity, false, `Unexpected RLS on exempt table ${row.relname}`);
 });
 
 test("job publications expose the public-read policy", async () => {
@@ -183,17 +160,10 @@ test("bootstrap functions exist and are executable by runtime role", async () =>
     SELECT routine_name
     FROM information_schema.routines
     WHERE routine_schema = 'public'
-      AND routine_name = ANY(${sql.array([
-        "resolve_session",
-        "resolve_login_user",
-        "resolve_job_publication",
-      ])})
+      AND routine_name = ANY(${sql.array(["resolve_session","resolve_login_user","resolve_job_publication"])} )
   `;
 
-  assert.deepEqual(
-    rows.map((row) => row.routine_name).sort(),
-    ["resolve_job_publication", "resolve_login_user", "resolve_session"].sort(),
-  );
+  assert.deepEqual(rows.map((row) => row.routine_name).sort(), ["resolve_job_publication","resolve_login_user","resolve_session"].sort());
 
   const grants = await sql<{ routine_name: string }[]>`
     SELECT routine_name
@@ -201,17 +171,10 @@ test("bootstrap functions exist and are executable by runtime role", async () =>
     WHERE routine_schema = 'public'
       AND grantee = current_user
       AND privilege_type = 'EXECUTE'
-      AND routine_name = ANY(${sql.array([
-        "resolve_session",
-        "resolve_login_user",
-        "resolve_job_publication",
-      ])})
+      AND routine_name = ANY(${sql.array(["resolve_session","resolve_login_user","resolve_job_publication"])} )
   `;
 
-  assert.deepEqual(
-    grants.map((row) => row.routine_name).sort(),
-    ["resolve_job_publication", "resolve_login_user", "resolve_session"].sort(),
-  );
+  assert.deepEqual(grants.map((row) => row.routine_name).sort(), ["resolve_job_publication","resolve_login_user","resolve_session"].sort());
 });
 
 test("native boolean columns are PostgreSQL boolean", async () => {
@@ -219,57 +182,29 @@ test("native boolean columns are PostgreSQL boolean", async () => {
     const rows = await sql<{ data_type: string }[]>`
       SELECT data_type
       FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = ${table}
-        AND column_name = ${column}
+      WHERE table_schema = 'public' AND table_name = ${table} AND column_name = ${column}
     `;
-
     assert.equal(rows.length, 1, `${table}.${column} is missing`);
-    assert.equal(
-      rows[0]!.data_type,
-      "boolean",
-      `${table}.${column} is not boolean`,
-    );
+    assert.equal(rows[0]!.data_type, "boolean", `${table}.${column} is not boolean`);
   }
 });
 
 test("timezone-aware timestamp columns are PostgreSQL timestamptz", async () => {
-  const rows = await sql<
-    { table_name: string; column_name: string; data_type: string }[]
-  >`
+  const rows = await sql<{ table_name: string; column_name: string; data_type: string }[]>`
     SELECT table_name, column_name, data_type
     FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND data_type = 'timestamp with time zone'
+    WHERE table_schema = 'public' AND data_type = 'timestamp with time zone'
   `;
 
   assert.ok(rows.length > 0, "No timestamp with time zone columns were found.");
-
-  const required = [
-    ["organizations", "created_at"],
-    ["users", "created_at"],
-    ["sessions", "expires_at"],
-    ["job_publications", "published_at"],
-    ["offers", "created_at"],
-  ];
-
-  for (const [table, column] of required) {
-    assert.ok(
-      rows.some(
-        (row) => row.table_name === table && row.column_name === column,
-      ),
-      `${table}.${column} is not timestamptz`,
-    );
-  }
+  const required = [["organizations","created_at"],["users","created_at"],["sessions","expires_at"],["job_publications","published_at"],["offers","created_at"]];
+  for (const [table, column] of required) assert.ok(rows.some((row) => row.table_name === table && row.column_name === column), `${table}.${column} is not timestamptz`);
 });
 
 test("runtime role cannot bypass RLS", async () => {
   const rows = await sql<{ rolname: string; rolbypassrls: boolean }[]>`
-    SELECT rolname, rolbypassrls
-    FROM pg_roles
-    WHERE rolname = current_user
+    SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = current_user
   `;
-
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.rolbypassrls, false);
 });
