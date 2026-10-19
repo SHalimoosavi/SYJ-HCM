@@ -53,7 +53,18 @@ jobs:
         run: npm run db:migrate
 
       - name: Typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck -- --pretty false 2>&1 | tee typecheck.log
+
+      - name: Upload typecheck diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          if-no-files-found: ignore
 
       - name: PostgreSQL foundation tests
         run: npm run test:foundation
