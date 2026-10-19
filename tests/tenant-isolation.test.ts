@@ -25,13 +25,14 @@ async function setupTenants(){
     // foreign key. Seed the parent employee rows before their user rows so the
     // fixture models the production referential-integrity invariant.
     //
-    // Employee codes, work emails, and user emails are deliberately unique per
-    // fixture invocation because this test calls setupTenants() multiple times
-    // against the same PostgreSQL database and those columns have uniqueness
-    // constraints. Random fixture identities must not collide across tests.
+    // Employee codes, work emails, user emails, and leave-type names are
+    // deliberately unique per fixture invocation because this test calls
+    // setupTenants() multiple times against the same PostgreSQL database and
+    // those columns have uniqueness constraints. Random fixture identities must
+    // not collide across tests.
     await tx.unsafe(`INSERT INTO employees (id,organization_id,employee_code,first_name,last_name,work_email,date_of_joining,designation) VALUES ('${ids.employeeA}','${ORG_A}','EMP-A-${suffix}','A','User','${suffix}.a@tenant-a.test','2026-01-01','Tester'),('${ids.employeeB}','${ORG_B}','EMP-B-${suffix}','B','User','${suffix}.b@tenant-b.test','2026-01-01','Tester')`);
-    await tx.unsafe(`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,employee_id,is_active) VALUES ('${ids.userA}', '${ORG_A}','${suffix}.admin-a@tenant-a.test','h','s','admin','${ids.employeeA}',true),('${ids.userB}','${ORG_B}','${suffix}.admin-b@tenant-b.test','h','s','admin','${ids.employeeB}',true)`);
-    await tx.unsafe(`INSERT INTO leave_types (id,organization_id,name,annual_quota,is_paid) VALUES ('${ids.leaveTypeA}','${ORG_A}','Annual A',10,true),('${ids.leaveTypeB}','${ORG_B}','Annual B',10,true)`);
+    await tx.unsafe(`INSERT INTO users (id,organization_id,email,password_hash,password_salt,role,employee_id,is_active) VALUES ('${ids.userA}', '${ORG_A}','${suffix}.admin-a@tenant-a.test','h','s','admin','${ids.employeeA}',true),('${ids.userB}', '${ORG_B}','${suffix}.admin-b@tenant-b.test','h','s','admin','${ids.employeeB}',true)`);
+    await tx.unsafe(`INSERT INTO leave_types (id,organization_id,name,annual_quota,is_paid) VALUES ('${ids.leaveTypeA}','${ORG_A}','Annual A ${suffix}',10,true),('${ids.leaveTypeB}','${ORG_B}','Annual B ${suffix}',10,true)`);
     await tx.unsafe(`INSERT INTO leave_balances (id,organization_id,employee_id,leave_type_id,year,allocated,used) VALUES ('${nanoid()}','${ORG_A}','${ids.employeeA}','${ids.leaveTypeA}',2026,10,0),('${nanoid()}','${ORG_B}','${ids.employeeB}','${ids.leaveTypeB}',2026,10,0)`);
     await tx.unsafe(`INSERT INTO leave_requests (id,organization_id,employee_id,leave_type_id,start_date,end_date,days,status) VALUES ('${ids.leaveRequestA}','${ORG_A}','${ids.employeeA}','${ids.leaveTypeA}','2026-10-01','2026-10-01',1,'pending'),('${ids.leaveRequestB}','${ORG_B}','${ids.employeeB}','${ids.leaveTypeB}','2026-10-02','2026-10-02',1,'pending')`);
     await tx.unsafe(`INSERT INTO attendance_records (id,organization_id,employee_id,work_date,status) VALUES ('${ids.attendanceA}','${ORG_A}','${ids.employeeA}','2026-09-10','present'),('${ids.attendanceB}','${ORG_B}','${ids.employeeB}','2026-09-10','present')`);
