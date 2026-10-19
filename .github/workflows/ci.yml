@@ -71,7 +71,18 @@ jobs:
         run: npm run lint
 
       - name: PostgreSQL foundation tests
-        run: npm run test:foundation
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:foundation 2>&1 | tee postgres-foundation-test.log
+
+      - name: Upload PostgreSQL foundation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-foundation-test-diagnostics
+          path: postgres-foundation-test.log
+          if-no-files-found: ignore
 
       - name: Full PostgreSQL test suite
         shell: bash
